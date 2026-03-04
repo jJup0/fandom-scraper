@@ -41,6 +41,14 @@ class TestIndex:
         resp = client.get("/?q=puzzle")
         assert b"1 result" in resp.data
 
+    def test_wiki_name_displayed(self, client):
+        resp = client.get("/")
+        assert b"Test Wiki" in resp.data
+
+    def test_page_links_use_underscores(self, client):
+        resp = client.get("/")
+        assert b"/wiki/Page_With_Spaces" in resp.data or b"/wiki/Page+With+Spaces" in resp.data
+
 
 class TestWikiPage:
     def test_found(self, client):
@@ -118,6 +126,14 @@ class TestWikiPage:
     def test_back_link_present(self, client):
         resp = client.get("/wiki/Gorogoa")
         assert b'href="/"' in resp.data
+
+    def test_keyboard_shortcut_script_present(self, client):
+        resp = client.get("/wiki/Gorogoa")
+        assert b"shiftKey" in resp.data and b"keydown" in resp.data
+
+    def test_theme_css_link(self, client):
+        resp = client.get("/wiki/Gorogoa")
+        assert b"/static/testwiki/theme.css" in resp.data
 
 
 class TestApiSearch:
