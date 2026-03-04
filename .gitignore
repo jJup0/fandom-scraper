@@ -1,6 +1,6 @@
 *.db
 *.db-journal
-static/*/images/
+static/*/
 __pycache__/
 *.pyc
 .DS_Store

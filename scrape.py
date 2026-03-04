@@ -121,8 +121,7 @@ def get_image_urls(filenames):
 
 def download_image(url, filename):
     """Download image to static/images/, return local relative path."""
-    ext = os.path.splitext(filename)[1] or ".png"
-    safe_name = hashlib.md5(filename.encode()).hexdigest() + ext
+    safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
     local_path = os.path.join(
         os.path.dirname(__file__), "static", WIKI_NAME, "images", safe_name
     )
@@ -272,9 +271,13 @@ def main():
         for m in re.findall(r'data-image-key="([^"]+)"', row[0]):
             all_image_filenames.add(urllib.parse.unquote(m))
 
+    # Filter out images that are already downloaded locally
+    local_files = set(os.listdir(img_dir))
+    needed = [f for f in all_image_filenames if f.replace("/", "_").replace("\\", "_") not in local_files]
+
     # Download images
-    print(f"\nResolving {len(all_image_filenames)} image URLs...")
-    image_urls = get_image_urls(list(all_image_filenames))
+    print(f"\nResolving {len(needed)} image URLs ({len(all_image_filenames) - len(needed)} already local)...")
+    image_urls = get_image_urls(needed)
     image_map = {}  # remote_url -> local_filename
     for fname, url in image_urls.items():
         try:
