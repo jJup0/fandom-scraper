@@ -427,7 +427,7 @@ class TestDownloadImage:
         self.img_dir = tmp_path / "static" / "tw" / "images"
         self.img_dir.mkdir(parents=True)
         monkeypatch.setattr(
-            os.path,
+            scrape.os.path,
             "dirname",
             lambda f, _orig=os.path.dirname: (
                 str(tmp_path) if f == scrape.__file__ else _orig(f)

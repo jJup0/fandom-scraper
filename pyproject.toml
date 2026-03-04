@@ -11,17 +11,8 @@ strict = true
 warn_return_any = true
 warn_unused_configs = true
 
-[[tool.mypy.overrides]]
-module = ["flask.*", "requests.*", "playwright.*"]
-ignore_missing_imports = true
-
 [tool.pyright]
 pythonVersion = "3.12"
 typeCheckingMode = "strict"
 reportPrivateUsage = false
 reportUnknownLambdaType = false
-reportUnknownVariableType = "warning"
-reportUnknownArgumentType = "warning"
-reportMissingImports = "warning"
-reportUnknownMemberType = "warning"
-reportUnknownParameterType = "warning"

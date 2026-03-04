@@ -14,7 +14,6 @@ import sys
 import threading
 
 from flask import Flask, Response, g, jsonify, redirect, render_template, request
-from werkzeug.wrappers import Response as WerkzeugResponse
 
 app: Flask = Flask(__name__)
 _db_path: str | None = None
@@ -24,7 +23,8 @@ scraping_in_progress: bool = False
 
 def get_db() -> sqlite3.Connection:
     if "db" not in g:
-        g.db = sqlite3.connect(_db_path)  # type: ignore[arg-type]
+        assert _db_path is not None, "_db_path must be set before serving"
+        g.db = sqlite3.connect(_db_path)
         g.db.row_factory = sqlite3.Row
     return g.db  # type: ignore[no-any-return]
 
@@ -93,7 +93,7 @@ def api_search() -> Response:
 
 
 @app.route("/wiki/<path:title>")
-def page(title: str) -> str | tuple[str, int] | WerkzeugResponse:
+def page(title: str) -> str | tuple[str, int] | Response:
     db = get_db()
     row = db.execute(
         "SELECT * FROM pages WHERE title = ?", (title.replace("_", " "),)
@@ -106,16 +106,14 @@ def page(title: str) -> str | tuple[str, int] | WerkzeugResponse:
         if m:
             return redirect("/wiki/" + m.group(1))
     categories: list[str] = json.loads(row["categories"])
+    has_full_css: bool = app.config.get("HAS_FULL_CSS", True)  # type: ignore[assignment]
+    wiki_slug: str = app.config.get("WIKI_SLUG", "")  # type: ignore[assignment]
     return render_template(
         "page.html",
         page=row,
         categories=categories,
-        has_full_css=app.config.get(  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            "HAS_FULL_CSS", True
-        ),
-        wiki_slug=app.config.get(  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-            "WIKI_SLUG", ""
-        ),
+        has_full_css=has_full_css,
+        wiki_slug=wiki_slug,
     )
 
 

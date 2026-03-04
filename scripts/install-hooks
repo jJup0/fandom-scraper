@@ -1,0 +1,21 @@
+#!/bin/sh
+# Install git hooks for formatting (pre-commit) and testing (pre-push).
+# Usage: ./scripts/install-hooks
+
+cat > .git/hooks/pre-commit << 'EOF'
+#!/bin/sh
+set -e
+autoflake --remove-all-unused-imports --check --quiet .
+isort --check-only --quiet .
+black --check --quiet .
+EOF
+chmod +x .git/hooks/pre-commit
+
+cat > .git/hooks/pre-push << 'EOF'
+#!/bin/sh
+set -e
+tox -e py312
+EOF
+chmod +x .git/hooks/pre-push
+
+echo "Installed pre-commit and pre-push hooks."

@@ -132,6 +132,16 @@ Fandom explicitly allows `/api.php?` for all bots. We're compliant.
 - Python 3, `requests`, `flask`
 - SQLite with FTS5 (included in Python's `sqlite3`)
 
+## Development
+
+```bash
+pip install -r requirements.txt
+./scripts/install-hooks   # one-time: installs formatting pre-commit hook
+tox                       # run tests
+tox -e format             # auto-format
+tox -e typecheck          # mypy + pyright
+```
+
 ## License
 
 Personal tool for offline wiki browsing. All wiki content belongs to its respective authors under [CC-BY-SA](https://creativecommons.org/licenses/by-sa/3.0/).

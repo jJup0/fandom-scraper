@@ -20,7 +20,7 @@ WIKI = "gorogoa"  # tiny wiki, ~8 pages
 @pytest.fixture(scope="module")
 def scraped_wiki(
     tmp_path_factory: pytest.TempPathFactory,
-) -> Generator[tuple[Path, str], None, None]:
+) -> tuple[Path, str]:
     """Scrape a small real wiki into a temp dir."""
     tmp = tmp_path_factory.mktemp("live")
     db_path = str(tmp / f"{WIKI}.db")
@@ -33,7 +33,7 @@ def scraped_wiki(
     )
     assert r.returncode == 0, f"scrape failed:\n{r.stderr}"
     assert os.path.exists(db_path)
-    yield tmp, db_path
+    return tmp, db_path
 
 
 @pytest.fixture(scope="module")

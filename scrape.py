@@ -51,6 +51,16 @@ _wiki_name: str | None = None
 _api_url: str | None = None
 
 
+def _require_wiki_name() -> str:
+    assert _wiki_name is not None, "init_wiki() must be called first"
+    return _wiki_name
+
+
+def _require_api_url() -> str:
+    assert _api_url is not None, "init_wiki() must be called first"
+    return _api_url
+
+
 def init_wiki(name: str) -> None:
     global _wiki_name, _api_url
     _wiki_name = name
@@ -64,7 +74,7 @@ def verify_wiki_exists() -> bool:
     """Check that the wiki exists by making a lightweight API call."""
     try:
         r = SESSION.get(
-            _api_url,  # type: ignore[arg-type]
+            _require_api_url(),
             params={"action": "query", "meta": "siteinfo", "format": "json"},
         )
         return r.status_code == 200 and "query" in r.json()
@@ -75,7 +85,7 @@ def verify_wiki_exists() -> bool:
 def api_get(params: dict[str, Any]) -> dict[str, Any]:
     params["format"] = "json"
     time.sleep(RATE_LIMIT)
-    r = SESSION.get(_api_url, params=params)  # type: ignore[arg-type]
+    r = SESSION.get(_require_api_url(), params=params)
     r.raise_for_status()
     result: dict[str, Any] = r.json()
     return result
@@ -158,7 +168,7 @@ def download_image(url: str, filename: str) -> str:
     """Download image to static/images/, return local relative path."""
     safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
     local_path = os.path.join(
-        os.path.dirname(__file__), "static", _wiki_name or "", "images", safe_name
+        os.path.dirname(__file__), "static", _require_wiki_name(), "images", safe_name
     )
     if os.path.exists(local_path):
         return safe_name
@@ -175,7 +185,9 @@ def download_image(url: str, filename: str) -> str:
 def rewrite_html(html: str, image_map: dict[str, str]) -> str:
     """Replace fandom image/link URLs with local paths."""
     for orig_url, local_name in image_map.items():
-        html = html.replace(orig_url, f"/static/{_wiki_name}/images/{local_name}")
+        html = html.replace(
+            orig_url, f"/static/{_require_wiki_name()}/images/{local_name}"
+        )
     # Rewrite data-src (lazy loaded images on fandom)
     html = re.sub(r' data-src="([^"]*)"', lambda m: f' src="{m.group(1)}"', html)
     # Rewrite internal wiki links to local routes
