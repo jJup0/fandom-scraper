@@ -11,6 +11,18 @@ import urllib.parse
 
 import requests
 
+from datetime import datetime, timezone
+
+
+def parse_touched(s):
+    """Parse a MediaWiki touched timestamp to a datetime."""
+    if not s:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+
 SESSION = requests.Session()
 RATE_LIMIT = 0.5  # seconds between requests
 WIKI_NAME = None
@@ -33,15 +45,23 @@ def api_get(params):
 
 
 def get_all_pages():
-    """Return list of {pageid, title} for all content pages (ns=0)."""
+    """Return list of {pageid, title, touched} for all content pages (ns=0)."""
     pages = []
-    params = {"action": "query", "list": "allpages", "aplimit": "50", "apnamespace": "0"}
+    params = {
+        "action": "query", "list": "allpages", "aplimit": "500", "apnamespace": "0",
+        "generator": "allpages", "gaplimit": "500", "gapnamespace": "0",
+        "prop": "info",
+    }
     while True:
         data = api_get(params)
-        pages.extend(data["query"]["allpages"])
+        if "query" in data and "pages" in data["query"]:
+            for p in data["query"]["pages"].values():
+                pages.append({"pageid": p["pageid"], "title": p["title"], "touched": p.get("touched", "")})
+        print(f"  enumerated {len(pages)} pages...", end="\r")
         if "continue" not in data:
             break
-        params["apcontinue"] = data["continue"]["apcontinue"]
+        params.update(data["continue"])
+    print(f"  enumerated {len(pages)} pages total")
     return pages
 
 
@@ -89,6 +109,7 @@ def download_image(url, filename):
     local_path = os.path.join(os.path.dirname(__file__), "static", WIKI_NAME, "images", safe_name)
     if os.path.exists(local_path):
         return safe_name
+    print(f"  downloading {filename}")
     time.sleep(RATE_LIMIT)
     r = SESSION.get(url, stream=True)
     r.raise_for_status()
@@ -126,7 +147,8 @@ def init_db(db_path):
             title TEXT NOT NULL,
             html TEXT NOT NULL,
             plaintext TEXT NOT NULL,
-            categories TEXT NOT NULL DEFAULT '[]'
+            categories TEXT NOT NULL DEFAULT '[]',
+            touched TEXT NOT NULL DEFAULT ''
         );
         CREATE VIRTUAL TABLE IF NOT EXISTS pages_fts USING fts5(
             title, plaintext, content=pages, content_rowid=pageid
@@ -171,26 +193,30 @@ def main():
     c = conn.cursor()
 
     # Track what we already have
-    existing = set(r[0] for r in c.execute("SELECT pageid FROM pages").fetchall())
+    existing = {r[0]: r[1] for r in c.execute("SELECT pageid, touched FROM pages").fetchall()}
 
     pages = get_all_pages()
-    print(f"Found {len(pages)} pages, {len(existing)} already scraped")
+    new = [p for p in pages if p["pageid"] not in existing]
+    updated = [p for p in pages if p["pageid"] in existing and parse_touched(p["touched"]) > parse_touched(existing[p["pageid"]])]
+    stale = new + updated  # new pages first
+    print(f"Found {len(pages)} pages, {len(existing)} in DB, {len(new)} new, {len(updated)} updated")
+    if updated[:3]:
+        for p in updated[:3]:
+            print(f"  e.g. {p['title']}: db={existing[p['pageid']]!r} api={p['touched']!r}")
 
     all_image_filenames = set()
 
-    for i, page in enumerate(pages):
-        if page["pageid"] in existing:
-            continue
-        print(f"[{i+1}/{len(pages)}] {page['title']}")
+    for i, page in enumerate(stale):
+        print(f"[{i+1}/{len(stale)}] {page['title']}")
         parsed = get_parsed_page(page["title"])
         if not parsed:
             print(f"  SKIP (error)")
             continue
         all_image_filenames.update(parsed["images"])
         c.execute(
-            "INSERT OR REPLACE INTO pages (pageid, title, html, plaintext, categories) VALUES (?,?,?,?,?)",
+            "INSERT OR REPLACE INTO pages (pageid, title, html, plaintext, categories, touched) VALUES (?,?,?,?,?,?)",
             (page["pageid"], page["title"], parsed["html"],
-             strip_text(parsed["html"]), json.dumps(parsed["categories"])),
+             strip_text(parsed["html"]), json.dumps(parsed["categories"]), page["touched"]),
         )
         if (i + 1) % 20 == 0:
             conn.commit()
@@ -208,12 +234,11 @@ def main():
     image_urls = get_image_urls(list(all_image_filenames))
     image_map = {}  # remote_url -> local_filename
     for fname, url in image_urls.items():
-        print(f"  downloading {fname}")
         try:
             local = download_image(url, fname)
             image_map[url] = local
         except Exception as e:
-            print(f"  FAILED: {e}")
+            print(f"  FAILED {fname}: {e}")
 
     # Rewrite HTML to use local images
     print("\nRewriting image URLs in stored pages...")
