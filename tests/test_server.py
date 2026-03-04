@@ -6,6 +6,7 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+import server
 
 
 class TestIndex:
@@ -33,6 +34,14 @@ class TestIndex:
         resp = client.get(f"/?q={q}")
         assert resp.status_code == 200
         assert b"Main Page" in resp.data
+
+    def test_browse_pages_sorted_alphabetically(self, client):
+        """Browse mode should list pages in alphabetical order."""
+        resp = client.get("/")
+        data = resp.data.decode()
+        titles = ["FTS Test", "Gorogoa", "Main Page", "Old Name"]
+        positions = [data.index(t) for t in titles]
+        assert positions == sorted(positions)
 
 
 class TestWikiPage:
@@ -73,7 +82,6 @@ class TestWikiPage:
         assert b"fallback CSS" in resp.data
 
     def test_css_warning_hidden_with_full_css(self, client):
-        import server
         server.app.config["HAS_FULL_CSS"] = True
         resp = client.get("/wiki/Gorogoa")
         assert b"fallback CSS" not in resp.data
@@ -81,12 +89,29 @@ class TestWikiPage:
     def test_unicode_page(self, client):
         resp = client.get("/wiki/Über_Page")
         assert resp.status_code == 200
-        assert "unicode content".encode() in resp.data
+        assert b"unicode content" in resp.data
 
     def test_special_chars_in_title(self, client):
         resp = client.get("/wiki/Special_&_Characters")
         assert resp.status_code == 200
         assert b"ampersand test" in resp.data
+
+    def test_page_no_categories_has_no_categories_div(self, client):
+        """Pages with empty categories list shouldn't render the categories section."""
+        resp = client.get("/wiki/Main_Page")
+        assert b'class="categories"' not in resp.data
+
+    def test_redirect_does_not_follow(self, client):
+        """Redirect pages should 302, not render the redirect HTML."""
+        resp = client.get("/wiki/Old_Name")
+        assert resp.status_code == 302
+
+    @pytest.mark.parametrize("path,expected_status", [
+        ("/wiki/", 404),
+        ("/wiki/a" * 500, 404),  # very long title
+    ])
+    def test_edge_case_paths(self, client, path, expected_status):
+        assert client.get(path).status_code == expected_status
 
 
 class TestApiSearch:
@@ -113,10 +138,27 @@ class TestApiSearch:
         assert data[0]["title"] == "Gorogoa"
 
     def test_unicode_search(self, client):
-        # FTS may or may not handle unicode well, but the endpoint shouldn't crash
         resp = client.get("/api/search?q=unicode")
         assert resp.status_code == 200
 
     def test_search_xylophone(self, client):
         data = json.loads(client.get("/api/search?q=xylophone").data)
         assert any(r["title"] == "FTS Test" for r in data)
+
+    def test_response_content_type_is_json(self, client):
+        resp = client.get("/api/search?q=puzzle")
+        assert resp.content_type == "application/json"
+
+    def test_results_are_list(self, client):
+        data = json.loads(client.get("/api/search?q=Welcome").data)
+        assert isinstance(data, list)
+        for item in data:
+            assert "title" in item
+            assert "snip" in item
+
+    @pytest.mark.xfail(reason="BUG: FTS5 special chars ({}, (), :) in raw queries cause OperationalError")
+    def test_search_special_chars_no_crash(self, client):
+        """FTS special chars like * {} () : shouldn't crash the search."""
+        for q in ["test*", "{}", "()", '"quoted"', "a:b"]:
+            resp = client.get(f"/api/search?q={q}")
+            assert resp.status_code == 200

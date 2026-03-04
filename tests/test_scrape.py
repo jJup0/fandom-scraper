@@ -11,23 +11,35 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import scrape
 
 
+UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _mock_resp(data):
+    m = MagicMock()
+    m.json.return_value = data
+    return m
+
+
 # ---------------------------------------------------------------------------
 # parse_touched
 # ---------------------------------------------------------------------------
 class TestParseTouched:
-    UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
-
     @pytest.mark.parametrize("ts,expected", [
         ("2024-01-15T10:30:00Z", datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc)),
         ("2000-12-31T23:59:59Z", datetime(2000, 12, 31, 23, 59, 59, tzinfo=timezone.utc)),
         ("2024-06-15T00:00:00Z", datetime(2024, 6, 15, tzinfo=timezone.utc)),
+        # epoch edge
+        ("1970-01-01T00:00:00Z", datetime(1970, 1, 1, tzinfo=timezone.utc)),
     ])
     def test_valid(self, ts, expected):
         assert scrape.parse_touched(ts) == expected
 
-    @pytest.mark.parametrize("ts", ["", None, "not-a-date", "2024-13-01T00:00:00Z", "garbage123"])
+    @pytest.mark.parametrize("ts", [
+        "", None, "not-a-date", "2024-13-01T00:00:00Z", "garbage123",
+        "12345", "2024-01-15T25:00:00Z",
+    ])
     def test_invalid_returns_min(self, ts):
-        assert scrape.parse_touched(ts) == self.UTC_MIN
+        assert scrape.parse_touched(ts) == UTC_MIN
 
 
 # ---------------------------------------------------------------------------
@@ -43,10 +55,13 @@ class TestStripText:
         ("<script>alert('x')</script>visible", "alert('x') visible"),
         ("<img src='x'>", ""),
         ("&lt;not a tag&gt;", "&lt;not a tag&gt;"),
-        # edge: only whitespace / only tags
         ("   ", ""),
         ("<br><br><br>", ""),
         ("<p>a</p><p>b</p><p>c</p>", "a b c"),
+        # edge: self-closing tags, comments, deeply nested
+        ("<hr/>text", "text"),
+        ("<!-- comment -->visible", "visible"),
+        ("<div><div><div>deep</div></div></div>", "deep"),
     ])
     def test_strip(self, html, expected):
         assert scrape.strip_text(html) == expected
@@ -60,14 +75,13 @@ class TestRewriteHtml:
     def _set_wiki(self):
         scrape.WIKI_NAME = "testwiki"
 
-    # --- image rewriting ---
-    @pytest.mark.parametrize("src,local,expect_in", [
+    @pytest.mark.parametrize("src,local,expected_path", [
         ("https://static.wikia.nocookie.net/img.png", "img.png", "/static/testwiki/images/img.png"),
         ("https://a.com/1.png", "1.png", "/static/testwiki/images/1.png"),
     ])
-    def test_replaces_image_urls(self, src, local, expect_in):
+    def test_replaces_image_urls(self, src, local, expected_path):
         html = f'<img src="{src}">'
-        assert expect_in in scrape.rewrite_html(html, {src: local})
+        assert expected_path in scrape.rewrite_html(html, {src: local})
 
     def test_multiple_images(self):
         html = '<img src="https://a.com/1.png"><img src="https://a.com/2.png">'
@@ -79,7 +93,6 @@ class TestRewriteHtml:
         html = '<img src="https://x.com/pic.png">'
         assert scrape.rewrite_html(html, {}) == html
 
-    # --- data-src → src ---
     def test_data_src_promoted(self):
         html = '<img data-src="https://example.com/lazy.png">'
         result = scrape.rewrite_html(html, {})
@@ -91,7 +104,6 @@ class TestRewriteHtml:
         result = scrape.rewrite_html(html, {})
         assert 'src="https://example.com/real.png"' in result
 
-    # --- link rewriting ---
     @pytest.mark.parametrize("href,expected_href", [
         ("https://testwiki.fandom.com/wiki/SomePage", "/wiki/SomePage"),
         ("https://otherwiki.fandom.com/wiki/Page", "/wiki/Page"),
@@ -115,6 +127,17 @@ class TestRewriteHtml:
         assert 'href="/wiki/X"' in result
         assert "/static/testwiki/images/i.png" in result
 
+    def test_non_wiki_fandom_links_not_rewritten(self):
+        """Links to fandom.com but not /wiki/ paths should be left alone."""
+        html = '<a href="https://testwiki.fandom.com/f/p/123">forum</a>'
+        assert 'href="https://testwiki.fandom.com/f/p/123"' in scrape.rewrite_html(html, {})
+
+    def test_duplicate_image_urls_in_map(self):
+        """Same URL appearing multiple times in HTML should all be replaced."""
+        html = '<img src="https://a.com/x.png"><img src="https://a.com/x.png">'
+        result = scrape.rewrite_html(html, {"https://a.com/x.png": "x.png"})
+        assert result.count("/static/testwiki/images/x.png") == 2
+
 
 # ---------------------------------------------------------------------------
 # init_db
@@ -128,10 +151,10 @@ class TestInitDb:
         p = str(tmp_path / "test.db")
         scrape.init_db(p).close()
         conn = scrape.init_db(p)
-        assert "pages" in {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()}
+        assert "pages" in tables
         conn.close()
 
-    # --- FTS triggers ---
     def test_fts_insert(self, db):
         db.execute("INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'Test','','hello','[]','')")
         db.commit()
@@ -163,6 +186,21 @@ class TestInitDb:
         db.commit()
         assert db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'xylo*'").fetchall()
 
+    def test_fts_no_false_positives(self, db):
+        db.execute("INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'T','','apple','[]','')")
+        db.commit()
+        assert not db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'banana'").fetchall()
+
+    def test_insert_or_replace_updates_fts(self, db):
+        """INSERT OR REPLACE fires delete+insert triggers, so FTS stays in sync."""
+        db.execute("INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'T','','old text','[]','')")
+        db.commit()
+        db.execute("INSERT OR REPLACE INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'T','','new text','[]','')")
+        db.commit()
+        assert db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'new'").fetchall()
+        # Verify only one row exists in FTS
+        assert len(db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'T'").fetchall()) == 1
+
 
 # ---------------------------------------------------------------------------
 # init_wiki
@@ -190,14 +228,14 @@ class TestApiGet:
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
     def test_adds_format_json(self, mock_get):
-        mock_get.return_value = MagicMock(json=MagicMock(return_value={}))
+        mock_get.return_value = _mock_resp({})
         scrape.api_get({"action": "query"})
         assert mock_get.call_args[1]["params"]["format"] == "json"
 
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
     def test_passes_params(self, mock_get):
-        mock_get.return_value = MagicMock(json=MagicMock(return_value={}))
+        mock_get.return_value = _mock_resp({})
         scrape.api_get({"action": "parse", "page": "Test"})
         p = mock_get.call_args[1]["params"]
         assert p["action"] == "parse"
@@ -212,6 +250,15 @@ class TestApiGet:
         with pytest.raises(Exception, match="500"):
             scrape.api_get({"action": "query"})
 
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_does_not_overwrite_existing_format(self, mock_get):
+        """format=json should be set even if caller passes something else (current behavior)."""
+        mock_get.return_value = _mock_resp({})
+        scrape.api_get({"action": "query", "format": "xml"})
+        # The function always sets format=json, overwriting any caller value
+        assert mock_get.call_args[1]["params"]["format"] == "json"
+
 
 # ---------------------------------------------------------------------------
 # get_all_pages
@@ -221,15 +268,10 @@ class TestGetAllPages:
     def _setup(self):
         scrape.API = "https://test.fandom.com/api.php"
 
-    def _mock_resp(self, data):
-        m = MagicMock()
-        m.json.return_value = data
-        return m
-
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
     def test_single_batch(self, mock_get):
-        mock_get.return_value = self._mock_resp({
+        mock_get.return_value = _mock_resp({
             "query": {"pages": {
                 "1": {"pageid": 1, "title": "A", "touched": "2024-01-01T00:00:00Z"},
                 "2": {"pageid": 2, "title": "B", "touched": "2024-01-02T00:00:00Z"},
@@ -243,11 +285,11 @@ class TestGetAllPages:
     @patch.object(scrape.SESSION, "get")
     def test_pagination(self, mock_get):
         mock_get.side_effect = [
-            self._mock_resp({
+            _mock_resp({
                 "query": {"pages": {"1": {"pageid": 1, "title": "A", "touched": ""}}},
                 "continue": {"apcontinue": "B", "continue": "-||"},
             }),
-            self._mock_resp({
+            _mock_resp({
                 "query": {"pages": {"2": {"pageid": 2, "title": "B", "touched": ""}}},
             }),
         ]
@@ -256,16 +298,26 @@ class TestGetAllPages:
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
     def test_empty_wiki(self, mock_get):
-        mock_get.return_value = self._mock_resp({"query": {"pages": {}}})
+        mock_get.return_value = _mock_resp({"query": {"pages": {}}})
         assert scrape.get_all_pages() == []
 
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
     def test_missing_touched_defaults_empty(self, mock_get):
-        mock_get.return_value = self._mock_resp({
+        mock_get.return_value = _mock_resp({
             "query": {"pages": {"1": {"pageid": 1, "title": "A"}}}
         })
         assert scrape.get_all_pages()[0]["touched"] == ""
+
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_three_pages_of_pagination(self, mock_get):
+        mock_get.side_effect = [
+            _mock_resp({"query": {"pages": {"1": {"pageid": 1, "title": "A", "touched": ""}}}, "continue": {"apcontinue": "B", "continue": "-||"}}),
+            _mock_resp({"query": {"pages": {"2": {"pageid": 2, "title": "B", "touched": ""}}}, "continue": {"apcontinue": "C", "continue": "-||"}}),
+            _mock_resp({"query": {"pages": {"3": {"pageid": 3, "title": "C", "touched": ""}}}}),
+        ]
+        assert len(scrape.get_all_pages()) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +359,18 @@ class TestGetParsedPage:
         assert result["categories"] == []
         assert result["images"] == []
 
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_multiple_categories(self, mock_get):
+        mock_get.return_value = MagicMock(json=MagicMock(return_value={
+            "parse": {
+                "text": {"*": "<p>x</p>"},
+                "categories": [{"*": "A"}, {"*": "B"}, {"*": "C"}],
+                "images": [],
+            }
+        }))
+        assert scrape.get_parsed_page("X")["categories"] == ["A", "B", "C"]
+
 
 # ---------------------------------------------------------------------------
 # get_image_urls
@@ -327,12 +391,19 @@ class TestGetImageUrls:
         }))
         assert scrape.get_image_urls(["Icon.png"])["Icon.png"] == "https://static.wikia.nocookie.net/icon.png"
 
+    @pytest.mark.parametrize("count,expected_calls", [
+        (50, 1),
+        (51, 2),
+        (75, 2),
+        (100, 2),
+        (101, 3),
+    ])
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
-    def test_batches_at_50(self, mock_get):
+    def test_batching(self, mock_get, count, expected_calls):
         mock_get.return_value = MagicMock(json=MagicMock(return_value={"query": {"pages": {}}}))
-        scrape.get_image_urls([f"img{i}.png" for i in range(75)])
-        assert mock_get.call_count == 2
+        scrape.get_image_urls([f"img{i}.png" for i in range(count)])
+        assert mock_get.call_count == expected_calls
 
     def test_empty_list(self):
         assert scrape.get_image_urls([]) == {}
@@ -344,13 +415,6 @@ class TestGetImageUrls:
             "query": {"pages": {"-1": {"title": "File:Missing.png", "missing": ""}}}
         }))
         assert scrape.get_image_urls(["Missing.png"]) == {}
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_exactly_50_is_one_batch(self, mock_get):
-        mock_get.return_value = MagicMock(json=MagicMock(return_value={"query": {"pages": {}}}))
-        scrape.get_image_urls([f"img{i}.png" for i in range(50)])
-        assert mock_get.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +446,9 @@ class TestDownloadImage:
         ("my image.png", "my_image.png"),
         ("a\\b.png", "a_b.png"),
         ("a/b c\\d.png", "a_b_c_d.png"),
+        # edge: leading/trailing special chars
+        ("/leading.png", "_leading.png"),
+        ("trailing/.png", "trailing_.png"),
     ])
     def test_sanitizes_filename(self, filename, expected):
         (self.img_dir / expected).write_bytes(b"x")
@@ -402,3 +469,11 @@ class TestDownloadImage:
         mock_get.return_value = resp
         with pytest.raises(Exception, match="404"):
             scrape.download_image("https://x.com/bad.png", "bad.png")
+
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_empty_chunks(self, mock_get):
+        """Server returns empty chunks - file should still be created."""
+        mock_get.return_value = MagicMock(iter_content=MagicMock(return_value=[b"", b"data", b""]))
+        scrape.download_image("https://x.com/empty.png", "empty.png")
+        assert (self.img_dir / "empty.png").read_bytes() == b"data"
