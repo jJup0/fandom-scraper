@@ -39,7 +39,9 @@ def _search(db, q, limit=100):
         (fts_q, limit),
     ).fetchall()
     ql = q.lower()
-    return sorted(rows, key=lambda r: (ql not in r["title"].lower(), r["title"].lower() != ql))
+    return sorted(
+        rows, key=lambda r: (ql not in r["title"].lower(), r["title"].lower() != ql)
+    )
 
 
 @app.route("/")
@@ -48,14 +50,19 @@ def index():
     q = request.args.get("q", "").strip()
     if q:
         rows = _search(db, q)
-        return render_template("index.html", pages=rows, query=q, search=True, wiki_name=WIKI_NAME)
+        return render_template(
+            "index.html", pages=rows, query=q, search=True, wiki_name=WIKI_NAME
+        )
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
-    return render_template("index.html", pages=rows, query="", search=False, wiki_name=WIKI_NAME)
+    return render_template(
+        "index.html", pages=rows, query="", search=False, wiki_name=WIKI_NAME
+    )
 
 
 @app.route("/api/search")
 def api_search():
     from flask import jsonify
+
     db = get_db()
     q = request.args.get("q", "").strip()
     if not q:
@@ -67,22 +74,33 @@ def api_search():
 @app.route("/wiki/<path:title>")
 def page(title):
     db = get_db()
-    row = db.execute("SELECT * FROM pages WHERE title = ?", (title.replace("_", " "),)).fetchone()
+    row = db.execute(
+        "SELECT * FROM pages WHERE title = ?", (title.replace("_", " "),)
+    ).fetchone()
     if not row:
         return "Page not found", 404
     # Follow MediaWiki redirects
     if '<div class="redirectMsg">' in row["html"]:
         import re
+
         m = re.search(r'href="/wiki/([^"]+)"', row["html"])
         if m:
             from flask import redirect
+
             return redirect("/wiki/" + m.group(1))
     categories = json.loads(row["categories"])
-    return render_template("page.html", page=row, categories=categories, has_full_css=app.config.get("HAS_FULL_CSS", True), wiki_slug=app.config.get("WIKI_SLUG"))
+    return render_template(
+        "page.html",
+        page=row,
+        categories=categories,
+        has_full_css=app.config.get("HAS_FULL_CSS", True),
+        wiki_slug=app.config.get("WIKI_SLUG"),
+    )
 
 
 if __name__ == "__main__":
     import argparse
+
     p = argparse.ArgumentParser()
     p.add_argument("wiki", help="Wiki name (e.g. spiritfarer)")
     p.add_argument("--db", default=None, help="Database path (default: <wiki>.db)")
@@ -95,7 +113,9 @@ if __name__ == "__main__":
     has_full_css = os.path.exists(css_path) and os.path.getsize(css_path) > 5000
     if not has_full_css:
         print("\n⚠️  Full Fandom CSS not found — using fallback styles.")
-        print("   For best results, see README for browser CSS extraction instructions.\n")
+        print(
+            "   For best results, see README for browser CSS extraction instructions.\n"
+        )
     app.config["HAS_FULL_CSS"] = has_full_css
     app.config["WIKI_SLUG"] = args.wiki
     app.run(host=args.host, port=args.port, debug=True)
