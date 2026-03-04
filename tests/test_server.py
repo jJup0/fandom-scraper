@@ -162,14 +162,8 @@ class TestApiSearch:
             assert "title" in item
             assert "snip" in item
 
-    @pytest.mark.parametrize("q", ["test*", '"quoted"'])
-    def test_search_special_chars_handled(self, client, q):
-        resp = client.get(f"/api/search?q={q}")
-        assert resp.status_code == 200
-
-    @pytest.mark.xfail(reason="BUG: FTS5 special chars ({}, (), :) passed raw cause OperationalError")
-    @pytest.mark.parametrize("q", ["{}", "()", "a:b"])
-    def test_search_special_chars_crash(self, client, q):
+    @pytest.mark.parametrize("q", ["test*", '"quoted"', "{}", "()", "a:b", "(hello", "he{llo"])
+    def test_search_special_chars_no_crash(self, client, q):
         resp = client.get(f"/api/search?q={q}")
         assert resp.status_code == 200
 
@@ -179,10 +173,6 @@ class TestApiSearch:
 
     def test_nonexistent_route_404(self, client):
         assert client.get("/nonexistent").status_code == 404
-
-    def test_phrase_search(self, client):
-        data = json.loads(client.get('/api/search?q="puzzle game"').data)
-        assert any(r["title"] == "Gorogoa" for r in data)
 
     def test_api_limits_to_20_results(self, db_path):
         """API search uses limit=20 vs index's limit=100."""

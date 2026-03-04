@@ -33,10 +33,12 @@ def close_db(exc):
 
 def _search(db, q, limit=100):
     """Search with prefix matching, title matches sorted first."""
-    if q and not any(c in q for c in '"*:{}()'):
-        fts_q = " ".join(w + "*" for w in q.split())
-    else:
-        fts_q = q
+    # Strip FTS5 syntax characters that cause OperationalError
+    cleaned = re.sub(r'[{}()\:\"*]', " ", q)
+    words = cleaned.split()
+    if not words:
+        return []
+    fts_q = " ".join(w + "*" for w in words)
     rows = db.execute(
         """SELECT p.pageid, p.title,
                   snippet(pages_fts, 1, '<mark>', '</mark>', '...', 40) as snip
