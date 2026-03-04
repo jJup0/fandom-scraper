@@ -49,6 +49,7 @@
 </head>
 <body class="skin-fandomdesktop theme-fandomdesktop-light" data-theme="light">
   <a class="back" href="/">← Back to index</a>
+  {% if not has_full_css %}<div style="background:#fff3cd;color:#856404;padding:8px 12px;border-radius:4px;margin-bottom:12px;font-size:13px">⚠️ Using fallback CSS. For best styling, see <a href="https://github.com" style="color:#856404;text-decoration:underline">README</a> for browser CSS extraction.</div>{% endif %}
   <div class="page-wrapper">
   <h1>{{ page.title }}</h1>
   {% if categories %}
