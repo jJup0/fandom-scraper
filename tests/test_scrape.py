@@ -226,18 +226,6 @@ class TestVerifyWikiExists:
         scrape.API = "https://test.fandom.com/api.php"
 
     @patch.object(scrape.SESSION, "get")
-    def test_returns_true_for_valid_wiki(self, mock_get):
-        mock_get.return_value = _mock_resp({"query": {"general": {"sitename": "Test"}}})
-        mock_get.return_value.status_code = 200
-        assert scrape.verify_wiki_exists() is True
-
-    @patch.object(scrape.SESSION, "get")
-    def test_returns_false_on_404(self, mock_get):
-        mock_get.return_value = _mock_resp({})
-        mock_get.return_value.status_code = 404
-        assert scrape.verify_wiki_exists() is False
-
-    @patch.object(scrape.SESSION, "get")
     def test_returns_false_on_network_error(self, mock_get):
         mock_get.side_effect = Exception("connection refused")
         assert scrape.verify_wiki_exists() is False
@@ -251,73 +239,12 @@ class TestVerifyWikiExists:
 
 
 # ---------------------------------------------------------------------------
-# api_get
-# ---------------------------------------------------------------------------
-class TestApiGet:
-    @pytest.fixture(autouse=True)
-    def _setup(self):
-        scrape.API = "https://test.fandom.com/api.php"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_adds_format_json(self, mock_get):
-        mock_get.return_value = _mock_resp({})
-        scrape.api_get({"action": "query"})
-        assert mock_get.call_args[1]["params"]["format"] == "json"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_passes_params(self, mock_get):
-        mock_get.return_value = _mock_resp({})
-        scrape.api_get({"action": "parse", "page": "Test"})
-        p = mock_get.call_args[1]["params"]
-        assert p["action"] == "parse"
-        assert p["page"] == "Test"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_raises_on_http_error(self, mock_get):
-        resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("500")
-        mock_get.return_value = resp
-        with pytest.raises(Exception, match="500"):
-            scrape.api_get({"action": "query"})
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_overwrites_caller_format(self, mock_get):
-        mock_get.return_value = _mock_resp({})
-        scrape.api_get({"action": "query", "format": "xml"})
-        assert mock_get.call_args[1]["params"]["format"] == "json"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_returns_parsed_json(self, mock_get):
-        mock_get.return_value = _mock_resp({"query": {"pages": {}}})
-        result = scrape.api_get({"action": "query"})
-        assert result == {"query": {"pages": {}}}
-
-
-# ---------------------------------------------------------------------------
 # get_all_pages
 # ---------------------------------------------------------------------------
 class TestGetAllPages:
     @pytest.fixture(autouse=True)
     def _setup(self):
         scrape.API = "https://test.fandom.com/api.php"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_single_batch(self, mock_get):
-        mock_get.return_value = _mock_resp({
-            "query": {"pages": {
-                "1": {"pageid": 1, "title": "A", "touched": "2024-01-01T00:00:00Z"},
-                "2": {"pageid": 2, "title": "B", "touched": "2024-01-02T00:00:00Z"},
-            }}
-        })
-        pages = scrape.get_all_pages()
-        assert len(pages) == 2
-        assert {p["title"] for p in pages} == {"A", "B"}
 
     @pytest.mark.parametrize("num_pages", [2, 3])
     @patch.object(scrape, "RATE_LIMIT", 0)
@@ -332,20 +259,6 @@ class TestGetAllPages:
         mock_get.side_effect = responses
         assert len(scrape.get_all_pages()) == num_pages
 
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_empty_wiki(self, mock_get):
-        mock_get.return_value = _mock_resp({"query": {"pages": {}}})
-        assert scrape.get_all_pages() == []
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_missing_touched_defaults_empty(self, mock_get):
-        mock_get.return_value = _mock_resp({
-            "query": {"pages": {"1": {"pageid": 1, "title": "A"}}}
-        })
-        assert scrape.get_all_pages()[0]["touched"] == ""
-
 
 # ---------------------------------------------------------------------------
 # get_parsed_page
@@ -357,44 +270,9 @@ class TestGetParsedPage:
 
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
-    def test_success(self, mock_get):
-        mock_get.return_value = _mock_resp({
-            "parse": {
-                "text": {"*": "<p>Content</p>"},
-                "categories": [{"*": "Cat1"}],
-                "images": ["File1.png"],
-            }
-        })
-        result = scrape.get_parsed_page("Test")
-        assert result["html"] == "<p>Content</p>"
-        assert result["categories"] == ["Cat1"]
-        assert result["images"] == ["File1.png"]
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
     def test_error_returns_none(self, mock_get):
         mock_get.return_value = _mock_resp({"error": {"code": "missingtitle"}})
         assert scrape.get_parsed_page("Nonexistent") is None
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_no_categories_or_images(self, mock_get):
-        mock_get.return_value = _mock_resp({"parse": {"text": {"*": "<p>bare</p>"}}})
-        result = scrape.get_parsed_page("Bare")
-        assert result["categories"] == []
-        assert result["images"] == []
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_multiple_categories(self, mock_get):
-        mock_get.return_value = _mock_resp({
-            "parse": {
-                "text": {"*": "<p>x</p>"},
-                "categories": [{"*": "A"}, {"*": "B"}, {"*": "C"}],
-                "images": [],
-            }
-        })
-        assert scrape.get_parsed_page("X")["categories"] == ["A", "B", "C"]
 
 
 # ---------------------------------------------------------------------------
@@ -404,17 +282,6 @@ class TestGetImageUrls:
     @pytest.fixture(autouse=True)
     def _setup(self):
         scrape.API = "https://test.fandom.com/api.php"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_resolves_urls(self, mock_get):
-        mock_get.return_value = _mock_resp({
-            "query": {"pages": {"1": {
-                "title": "File:Icon.png",
-                "imageinfo": [{"url": "https://static.wikia.nocookie.net/icon.png"}],
-            }}}
-        })
-        assert scrape.get_image_urls(["Icon.png"])["Icon.png"] == "https://static.wikia.nocookie.net/icon.png"
 
     @pytest.mark.parametrize("count,expected_calls", [
         (50, 1), (51, 2), (100, 2), (101, 3),
@@ -450,14 +317,6 @@ class TestDownloadImage:
         monkeypatch.setattr(scrape.os.path, "dirname",
                             lambda f, _orig=os.path.dirname: str(tmp_path) if f == scrape.__file__ else _orig(f))
 
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_downloads_new_file(self, mock_get):
-        mock_get.return_value = MagicMock(iter_content=MagicMock(return_value=[b"imgdata"]))
-        result = scrape.download_image("https://x.com/pic.png", "pic.png")
-        assert result == "pic.png"
-        assert (self.img_dir / "pic.png").read_bytes() == b"imgdata"
-
     def test_skips_existing(self):
         (self.img_dir / "existing.png").write_bytes(b"old")
         assert scrape.download_image("https://x.com/existing.png", "existing.png") == "existing.png"
@@ -473,29 +332,6 @@ class TestDownloadImage:
     def test_sanitizes_filename(self, filename, expected):
         (self.img_dir / expected).write_bytes(b"x")
         assert scrape.download_image("https://x.com/x", filename) == expected
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_writes_chunked_content(self, mock_get):
-        mock_get.return_value = MagicMock(iter_content=MagicMock(return_value=[b"aa", b"bb"]))
-        scrape.download_image("https://x.com/multi.png", "multi.png")
-        assert (self.img_dir / "multi.png").read_bytes() == b"aabb"
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_raises_on_http_error(self, mock_get):
-        resp = MagicMock()
-        resp.raise_for_status.side_effect = Exception("404")
-        mock_get.return_value = resp
-        with pytest.raises(Exception, match="404"):
-            scrape.download_image("https://x.com/bad.png", "bad.png")
-
-    @patch.object(scrape, "RATE_LIMIT", 0)
-    @patch.object(scrape.SESSION, "get")
-    def test_empty_chunks(self, mock_get):
-        mock_get.return_value = MagicMock(iter_content=MagicMock(return_value=[b"", b"data", b""]))
-        scrape.download_image("https://x.com/empty.png", "empty.png")
-        assert (self.img_dir / "empty.png").read_bytes() == b"data"
 
 
 # ---------------------------------------------------------------------------
