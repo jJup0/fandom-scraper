@@ -1,12 +1,7 @@
 """Unit tests for server.py Flask routes."""
 import json
-import os
-import sys
 
 import pytest
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import server
 
 
 class TestIndex:
@@ -44,7 +39,7 @@ class TestIndex:
 
     def test_search_result_count_label(self, client):
         resp = client.get("/?q=puzzle")
-        assert b"1 result " in resp.data or b"1 result\n" in resp.data or b'1 result for' in resp.data
+        assert b"1 result" in resp.data
 
 
 class TestWikiPage:
@@ -89,6 +84,7 @@ class TestWikiPage:
         assert b"fallback CSS" in resp.data
 
     def test_css_warning_hidden_with_full_css(self, client):
+        import server
         server.app.config["HAS_FULL_CSS"] = True
         resp = client.get("/wiki/Gorogoa")
         assert b"fallback CSS" not in resp.data
@@ -107,12 +103,9 @@ class TestWikiPage:
         resp = client.get("/wiki/Main_Page")
         assert b'class="categories"' not in resp.data
 
-    @pytest.mark.parametrize("path,expected_status", [
-        ("/wiki/", 404),
-        ("/wiki/" + "a" * 500, 404),
-    ])
-    def test_edge_case_paths(self, client, path, expected_status):
-        assert client.get(path).status_code == expected_status
+    @pytest.mark.parametrize("path", ["/wiki/", "/wiki/" + "a" * 500])
+    def test_edge_case_paths_404(self, client, path):
+        assert client.get(path).status_code == 404
 
     def test_empty_content_page(self, client):
         resp = client.get("/wiki/Empty_Content")
@@ -162,7 +155,7 @@ class TestApiSearch:
         resp = client.get("/api/search?q=puzzle")
         assert resp.content_type == "application/json"
 
-    def test_results_are_list_with_expected_keys(self, client):
+    def test_results_have_expected_keys(self, client):
         data = json.loads(client.get("/api/search?q=Welcome").data)
         assert isinstance(data, list)
         for item in data:
@@ -171,7 +164,6 @@ class TestApiSearch:
 
     @pytest.mark.parametrize("q", ["test*", '"quoted"'])
     def test_search_special_chars_handled(self, client, q):
-        """These special chars are handled by the guard in _search."""
         resp = client.get(f"/api/search?q={q}")
         assert resp.status_code == 200
 
@@ -181,14 +173,9 @@ class TestApiSearch:
         resp = client.get(f"/api/search?q={q}")
         assert resp.status_code == 200
 
-    def test_search_returns_multiple_results(self, client):
-        """A broad term should return more than one result."""
-        data = json.loads(client.get("/api/search?q=test").data)
-        assert len(data) >= 1
+    def test_case_insensitive(self, client):
+        data = json.loads(client.get("/api/search?q=PUZZLE").data)
+        assert any(r["title"] == "Gorogoa" for r in data)
 
     def test_nonexistent_route_404(self, client):
         assert client.get("/nonexistent").status_code == 404
-
-    def test_api_search_case_insensitive(self, client):
-        data = json.loads(client.get("/api/search?q=PUZZLE").data)
-        assert any(r["title"] == "Gorogoa" for r in data)

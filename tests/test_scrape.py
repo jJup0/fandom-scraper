@@ -1,13 +1,11 @@
 """Unit tests for scrape.py."""
+import json
 import os
-import sqlite3
-import sys
 from datetime import datetime, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import scrape
 
 UTC_MIN = datetime.min.replace(tzinfo=timezone.utc)
@@ -59,7 +57,6 @@ class TestStripText:
         ("<hr/>text", "text"),
         ("<!-- comment -->visible", "visible"),
         ("<div><div><div>deep</div></div></div>", "deep"),
-        # edge: entities, mixed whitespace, tabs/newlines
         ("<p>tab\there</p>", "tab here"),
         ("<p>new\nline</p>", "new line"),
         ("<p>\t\n  mixed  \t\n</p>", "mixed"),
@@ -144,8 +141,7 @@ class TestRewriteHtml:
         assert 'src="https://a.com/1.png"' in result
         assert 'src="https://a.com/2.png"' in result
 
-    def test_no_false_positive_link_rewrite(self):
-        """A URL containing '.fandom.com' but not as a wiki link shouldn't be rewritten."""
+    def test_community_fandom_link_rewritten(self):
         html = '<a href="https://community.fandom.com/wiki/Help">help</a>'
         assert 'href="/wiki/Help"' in scrape.rewrite_html(html, {})
 
@@ -211,7 +207,6 @@ class TestInitDb:
         assert len(db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'T'").fetchall()) == 1
 
     def test_fts_multiple_rows(self, db):
-        """Multiple rows should all be independently searchable."""
         for i in range(5):
             db.execute(f"INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES ({i},'Page{i}','','word{i}','[]','')")
         db.commit()
@@ -433,12 +428,12 @@ class TestGetImageUrls:
 # ---------------------------------------------------------------------------
 class TestDownloadImage:
     @pytest.fixture(autouse=True)
-    def _setup(self, tmp_path):
+    def _setup(self, tmp_path, monkeypatch):
         scrape.WIKI_NAME = "tw"
         self.img_dir = tmp_path / "static" / "tw" / "images"
         self.img_dir.mkdir(parents=True)
-        with patch("scrape.os.path.dirname", return_value=str(tmp_path)):
-            yield
+        monkeypatch.setattr(scrape.os.path, "dirname",
+                            lambda f, _orig=os.path.dirname: str(tmp_path) if f == scrape.__file__ else _orig(f))
 
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
@@ -486,3 +481,72 @@ class TestDownloadImage:
         mock_get.return_value = MagicMock(iter_content=MagicMock(return_value=[b"", b"data", b""]))
         scrape.download_image("https://x.com/empty.png", "empty.png")
         assert (self.img_dir / "empty.png").read_bytes() == b"data"
+
+
+# ---------------------------------------------------------------------------
+# main() integration
+# ---------------------------------------------------------------------------
+class TestMainIntegration:
+    """Test the main scrape flow with mocked HTTP."""
+
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_scrape_stores_and_rewrites(self, mock_get, tmp_path):
+        db_path = str(tmp_path / "test.db")
+        img_dir = tmp_path / "static" / "mywiki" / "images"
+        img_dir.mkdir(parents=True)
+        theme_dir = tmp_path / "static" / "mywiki"
+
+        # Mock responses in order: theme, allpages, parse, imageinfo, image download
+        theme_resp = MagicMock()
+        theme_resp.text = ":root { --color: red; }"
+
+        allpages_resp = _mock_resp({
+            "query": {"pages": {"1": {"pageid": 1, "title": "TestPage", "touched": "2024-06-01T00:00:00Z"}}}
+        })
+
+        parse_resp = _mock_resp({
+            "parse": {
+                "text": {"*": '<p>Hello</p><img src="https://static.wikia.nocookie.net/mywiki/pic.png">'},
+                "categories": [{"*": "TestCat"}],
+                "images": ["pic.png"],
+            }
+        })
+
+        imageinfo_resp = _mock_resp({
+            "query": {"pages": {"1": {
+                "title": "File:pic.png",
+                "imageinfo": [{"url": "https://static.wikia.nocookie.net/mywiki/pic.png"}],
+            }}}
+        })
+
+        img_download_resp = MagicMock()
+        img_download_resp.iter_content = MagicMock(return_value=[b"PNG_DATA"])
+
+        mock_get.side_effect = [theme_resp, allpages_resp, parse_resp, imageinfo_resp, img_download_resp]
+
+        # Patch dirname to redirect file writes to tmp_path
+        orig_dirname = os.path.dirname
+        def fake_dirname(p):
+            if p == scrape.__file__:
+                return str(tmp_path)
+            return orig_dirname(p)
+
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+
+        # Verify DB has the page with rewritten HTML
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        row = conn.execute("SELECT html, categories FROM pages WHERE title='TestPage'").fetchone()
+        conn.close()
+        assert row is not None
+        assert "/static/mywiki/images/pic.png" in row[0]
+        assert "TestCat" in row[1]
+
+        # Verify image was downloaded
+        assert (img_dir / "pic.png").exists()
+
+        # Verify theme was saved
+        assert (theme_dir / "theme.css").exists()
