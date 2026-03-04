@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Scrape any Fandom wiki via MediaWiki API into SQLite with FTS5."""
 import argparse
-import hashlib
 import json
+import logging
 import os
 import re
 import sqlite3
 import time
 import urllib.parse
 from datetime import datetime, timezone
+
+logging.basicConfig(
+    format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S", level=logging.INFO
+)
+log = logging.getLogger("scrape")
 
 import requests
 
@@ -70,11 +75,11 @@ def get_all_pages():
                         "touched": p.get("touched", ""),
                     }
                 )
-        print(f"  enumerated {len(pages)} pages...", end="\r")
+        log.info("enumerated %d pages...", len(pages))
         if "continue" not in data:
             break
         params.update(data["continue"])
-    print(f"  enumerated {len(pages)} pages total")
+    log.info("enumerated %d pages total", len(pages))
     return pages
 
 
@@ -127,7 +132,7 @@ def download_image(url, filename):
     )
     if os.path.exists(local_path):
         return safe_name
-    print(f"  downloading {filename}")
+    log.info("downloading %s", filename)
     time.sleep(RATE_LIMIT)
     r = SESSION.get(url, stream=True)
     r.raise_for_status()
@@ -204,7 +209,7 @@ def main():
 
     # Download theme variables (not behind Cloudflare)
     theme_url = f"https://{args.wiki}.fandom.com/wikia.php?controller=ThemeApi&method=themeVariables"
-    print(f"Downloading theme variables from {theme_url}...")
+    log.info("Downloading theme variables from %s...", theme_url)
     theme_css = SESSION.get(theme_url).text
     theme_path = os.path.join(
         os.path.dirname(__file__), "static", args.wiki, "theme.css"
@@ -212,7 +217,7 @@ def main():
     os.makedirs(os.path.dirname(theme_path), exist_ok=True)
     with open(theme_path, "w") as f:
         f.write(theme_css)
-    print(f"  Saved to static/{args.wiki}/theme.css")
+    log.info("Saved to static/%s/theme.css", args.wiki)
 
     conn = init_db(db_path)
     c = conn.cursor()
@@ -231,22 +236,29 @@ def main():
         and parse_touched(p["touched"]) > parse_touched(existing[p["pageid"]])
     ]
     stale = new + updated  # new pages first
-    print(
-        f"Found {len(pages)} pages, {len(existing)} in DB, {len(new)} new, {len(updated)} updated"
+    log.info(
+        "Found %d pages, %d in DB, %d new, %d updated",
+        len(pages),
+        len(existing),
+        len(new),
+        len(updated),
     )
     if updated[:3]:
         for p in updated[:3]:
-            print(
-                f"  e.g. {p['title']}: db={existing[p['pageid']]!r} api={p['touched']!r}"
+            log.info(
+                "  e.g. %s: db=%r api=%r",
+                p["title"],
+                existing[p["pageid"]],
+                p["touched"],
             )
 
     all_image_filenames = set()
 
     for i, page in enumerate(stale):
-        print(f"[{i+1}/{len(stale)}] {page['title']}")
+        log.info("[%d/%d] %s", i + 1, len(stale), page["title"])
         parsed = get_parsed_page(page["title"])
         if not parsed:
-            print(f"  SKIP (error)")
+            log.warning("SKIP (error): %s", page["title"])
             continue
         all_image_filenames.update(parsed["images"])
         c.execute(
@@ -262,7 +274,7 @@ def main():
         )
         if (i + 1) % 20 == 0:
             conn.commit()
-            print(f"  committed {i+1} pages")
+            log.info("committed %d pages", i + 1)
 
     conn.commit()
 
@@ -273,10 +285,18 @@ def main():
 
     # Filter out images that are already downloaded locally
     local_files = set(os.listdir(img_dir))
-    needed = [f for f in all_image_filenames if f.replace("/", "_").replace("\\", "_") not in local_files]
+    needed = [
+        f
+        for f in all_image_filenames
+        if f.replace("/", "_").replace("\\", "_") not in local_files
+    ]
 
     # Download images
-    print(f"\nResolving {len(needed)} image URLs ({len(all_image_filenames) - len(needed)} already local)...")
+    log.info(
+        "Resolving %d image URLs (%d already local)...",
+        len(needed),
+        len(all_image_filenames) - len(needed),
+    )
     image_urls = get_image_urls(needed)
     image_map = {}  # remote_url -> local_filename
     for fname, url in image_urls.items():
@@ -284,10 +304,10 @@ def main():
             local = download_image(url, fname)
             image_map[url] = local
         except Exception as e:
-            print(f"  FAILED {fname}: {e}")
+            log.warning("FAILED %s: %s", fname, e)
 
     # Rewrite HTML to use local images
-    print("\nRewriting image URLs in stored pages...")
+    log.info("Rewriting image URLs in stored pages...")
     for row in c.execute("SELECT pageid, html FROM pages").fetchall():
         new_html = rewrite_html(row[1], image_map)
         if new_html != row[1]:
@@ -297,7 +317,7 @@ def main():
             )
     conn.commit()
     conn.close()
-    print("Done!")
+    log.info("Done!")
 
 
 if __name__ == "__main__":

@@ -2,6 +2,8 @@
 
 A local, searchable mirror for **any** [Fandom](https://www.fandom.com/) wiki with full-text search, local images, and faithful visual styling.
 
+> ⚠️ **Disclaimer**: This project was primarily written by Claude Opus 4.6 (Anthropic) with human guidance. While it works, the code has not been thoroughly audited. Use at your own risk — review the scraping behavior before running against any wiki, and be respectful of Fandom's servers.
+
 ## Why
 
 Scrapes an entire wiki via the MediaWiki API, stores it in SQLite with FTS5 full-text search, and serves it locally — looking almost identical to the original.
@@ -11,14 +13,21 @@ Scrapes an entire wiki via the MediaWiki API, stores it in SQLite with FTS5 full
 ```bash
 pip install -r requirements.txt
 
-# Scrape any Fandom wiki (use the subdomain name)
-python scrape.py spiritfarer
-python scrape.py blue-prince
-python scrape.py hollowknight
-
-# Serve
-python server.py spiritfarer --host 0.0.0.0 --port 5000
+# Scrape and serve any Fandom wiki (use the subdomain name)
+python server.py spiritfarer
 # Open http://localhost:5000
+```
+
+That's it. The server will scrape the wiki on first run (and update on subsequent runs), then start serving.
+
+You can also scrape and serve separately:
+
+```bash
+# Scrape only
+python scrape.py spiritfarer
+
+# Serve only (skip scraping)
+python server.py spiritfarer --no-scrape
 ```
 
 Each wiki gets its own database (`<wiki>.db`) and asset directory (`static/<wiki>/`).
@@ -59,7 +68,7 @@ static/
   fandom-all.css           Fandom's layout CSS (extracted from browser, shared across wikis)
   <wiki>/
     theme.css              Per-wiki theme variables (auto-downloaded by scraper)
-    images/                Wiki images, named by MD5 hash
+    images/                Wiki images, named by original filename
 <wiki>.db                  SQLite database per wiki (pages + FTS5 index)
 templates/
   index.html               Search/browse page
@@ -81,7 +90,7 @@ Uses the MediaWiki API exclusively — no HTML scraping or browser automation.
 1. `action=query&list=allpages` — enumerate all content pages
 2. `action=parse&prop=text|categories|images` — rendered HTML per page
 3. `action=query&prop=imageinfo&iiprop=url` — batch-resolve image URLs (50 at a time)
-4. Download images to `static/<wiki>/images/` with MD5-hashed filenames
+4. Download images to `static/<wiki>/images/`
 5. Rewrite HTML: remote image URLs → local paths, wiki links → local routes
 6. Store in SQLite with FTS5 triggers for automatic search indexing
 7. `wikia.php?controller=ThemeApi&method=themeVariables` — download theme CSS
@@ -95,7 +104,7 @@ SQLite FTS5 with prefix matching (`word*`). Live search via `/api/search` JSON e
 ### Serving
 
 ```
-python server.py <wiki> [--db path] [--host 0.0.0.0] [--port 5000]
+python server.py <wiki> [--no-scrape] [--host 0.0.0.0] [--port 5000]
 ```
 
 - `/` — search/browse all pages

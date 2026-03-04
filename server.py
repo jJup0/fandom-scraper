@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Local web server to browse and search a scraped Fandom wiki."""
+import argparse
 import json
+import logging
 import os
+import re
 import sqlite3
+import subprocess
+import sys
+import threading
 
-from flask import Flask, g, render_template, request
+from flask import Flask, g, jsonify, redirect, render_template, request
 
 app = Flask(__name__)
 DB_PATH = None
@@ -61,7 +67,6 @@ def index():
 
 @app.route("/api/search")
 def api_search():
-    from flask import jsonify
 
     db = get_db()
     q = request.args.get("q", "").strip()
@@ -81,12 +86,8 @@ def page(title):
         return "Page not found", 404
     # Follow MediaWiki redirects
     if '<div class="redirectMsg">' in row["html"]:
-        import re
-
         m = re.search(r'href="/wiki/([^"]+)"', row["html"])
         if m:
-            from flask import redirect
-
             return redirect("/wiki/" + m.group(1))
     categories = json.loads(row["categories"])
     return render_template(
@@ -99,23 +100,46 @@ def page(title):
 
 
 if __name__ == "__main__":
-    import argparse
+    logging.basicConfig(
+        format="%(asctime)s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+        level=logging.INFO,
+    )
+    log = logging.getLogger("server")
 
     p = argparse.ArgumentParser()
     p.add_argument("wiki", help="Wiki name (e.g. spiritfarer)")
     p.add_argument("--db", default=None, help="Database path (default: <wiki>.db)")
+    p.add_argument("--no-scrape", action="store_true", help="Skip scraping, just serve")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
     args = p.parse_args()
-    WIKI_NAME = args.wiki.replace("-", " ").title()
+
     DB_PATH = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
+
+    if not args.no_scrape:
+
+        def _scrape():
+            cmd = [
+                sys.executable,
+                os.path.join(os.path.dirname(__file__), "scrape.py"),
+                args.wiki,
+            ]
+            if args.db:
+                cmd += ["--db", args.db]
+            subprocess.run(cmd)
+
+        log.info("Scraping %s in background...", args.wiki)
+        threading.Thread(target=_scrape, daemon=True).start()
+
+    WIKI_NAME = args.wiki.replace("-", " ").title()
     css_path = os.path.join(os.path.dirname(__file__), "static", "fandom-all.css")
     has_full_css = os.path.exists(css_path) and os.path.getsize(css_path) > 5000
     if not has_full_css:
-        print("\n⚠️  Full Fandom CSS not found — using fallback styles.")
-        print(
-            "   For best results, see README for browser CSS extraction instructions.\n"
+        log.warning("Full Fandom CSS not found — using fallback styles.")
+        log.warning(
+            "For best results, see README for browser CSS extraction instructions."
         )
     app.config["HAS_FULL_CSS"] = has_full_css
     app.config["WIKI_SLUG"] = args.wiki
-    app.run(host=args.host, port=args.port, debug=True)
+    app.run(host=args.host, port=args.port, debug=True, use_reloader=False)
