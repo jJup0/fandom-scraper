@@ -24,20 +24,43 @@ def close_db(exc):
         db.close()
 
 
+def _search(db, q, limit=100):
+    """Search with prefix matching, title matches sorted first."""
+    if q and not any(c in q for c in '"*:{}()'):
+        fts_q = " ".join(w + "*" for w in q.split())
+    else:
+        fts_q = q
+    rows = db.execute(
+        """SELECT p.pageid, p.title,
+                  snippet(pages_fts, 1, '<mark>', '</mark>', '...', 40) as snip
+           FROM pages_fts JOIN pages p ON p.pageid = pages_fts.rowid
+           WHERE pages_fts MATCH ? ORDER BY rank LIMIT ?""",
+        (fts_q, limit),
+    ).fetchall()
+    ql = q.lower()
+    return sorted(rows, key=lambda r: (ql not in r["title"].lower(), r["title"].lower() != ql))
+
+
 @app.route("/")
 def index():
     db = get_db()
     q = request.args.get("q", "").strip()
     if q:
-        rows = db.execute(
-            """SELECT p.pageid, p.title, snippet(pages_fts, 1, '<mark>', '</mark>', '...', 40) as snip
-               FROM pages_fts JOIN pages p ON p.pageid = pages_fts.rowid
-               WHERE pages_fts MATCH ? ORDER BY rank LIMIT 100""",
-            (q,),
-        ).fetchall()
+        rows = _search(db, q)
         return render_template("index.html", pages=rows, query=q, search=True)
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
     return render_template("index.html", pages=rows, query="", search=False)
+
+
+@app.route("/api/search")
+def api_search():
+    from flask import jsonify
+    db = get_db()
+    q = request.args.get("q", "").strip()
+    if not q:
+        return jsonify([])
+    rows = _search(db, q, limit=20)
+    return jsonify([{"title": r["title"], "snip": r["snip"]} for r in rows])
 
 
 @app.route("/wiki/<path:title>")

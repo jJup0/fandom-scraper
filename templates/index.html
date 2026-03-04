@@ -22,8 +22,9 @@
 <body>
   <h1><a href="/">🚢 Spiritfarer Wiki</a></h1>
   <form method="get" action="/">
-    <input class="search-box" type="text" name="q" value="{{ query }}" placeholder="Search the wiki..." autofocus>
+    <input class="search-box" type="text" name="q" id="q" value="{{ query }}" placeholder="Search the wiki..." autofocus>
   </form>
+  <div id="results">
   {% if search %}
     <p class="count">{{ pages|length }} result{{ 's' if pages|length != 1 }} for "{{ query }}"</p>
   {% else %}
@@ -37,5 +38,30 @@
     </li>
     {% endfor %}
   </ul>
+  </div>
+  <script>
+  (function(){
+    const q = document.getElementById('q'), res = document.getElementById('results');
+    let timer;
+    q.addEventListener('input', function(){
+      clearTimeout(timer);
+      const v = q.value.trim();
+      if (!v) { location.href = '/'; return; }
+      timer = setTimeout(()=>{
+        fetch('/api/search?q='+encodeURIComponent(v))
+          .then(r=>r.json()).then(data=>{
+            let h = '<p class="count">'+data.length+' result'+(data.length!==1?'s':'')+'</p><ul class="page-list">';
+            data.forEach(r=>{
+              h+='<li><a href="/wiki/'+encodeURIComponent(r.title)+'">'+esc(r.title)+'</a>';
+              if(r.snip) h+='<div class="snip">'+r.snip+'</div>';
+              h+='</li>';
+            });
+            res.innerHTML = h+'</ul>';
+          });
+      }, 250);
+    });
+    function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
+  })();
+  </script>
 </body>
 </html>
