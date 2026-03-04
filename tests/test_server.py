@@ -45,6 +45,27 @@ class TestIndex:
         resp = client.get("/")
         assert b"/wiki/Page_With_Spaces" in resp.data or b"/wiki/Page+With+Spaces" in resp.data
 
+    def test_scraping_notice_hidden_when_not_scraping(self, client):
+        import server
+        server.scraping_in_progress = False
+        resp = client.get("/")
+        assert b'<div class="scraping-notice">' not in resp.data
+
+    def test_scraping_notice_visible_when_scraping(self, client):
+        import server
+        server.scraping_in_progress = True
+        resp = client.get("/")
+        assert b'<div class="scraping-notice">' in resp.data
+        assert b"Scraping in progress" in resp.data
+        server.scraping_in_progress = False
+
+    def test_scraping_notice_visible_during_search(self, client):
+        import server
+        server.scraping_in_progress = True
+        resp = client.get("/?q=puzzle")
+        assert b'<div class="scraping-notice">' in resp.data
+        server.scraping_in_progress = False
+
 
 class TestWikiPage:
     def test_found(self, client):

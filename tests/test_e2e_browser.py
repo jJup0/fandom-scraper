@@ -79,3 +79,10 @@ def test_static_images_load(page):
     images = pg.locator("img").all()
     for img in images[:3]:
         assert img.evaluate("el => el.naturalWidth") > 0 or img.get_attribute("src", "").startswith("data:")
+
+
+def test_scraping_notice_hidden_when_not_scraping(page):
+    """Notice should not appear when --no-scrape is used."""
+    pg, url = page
+    pg.goto(url)
+    expect(pg.locator(".scraping-notice")).to_have_count(0)

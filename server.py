@@ -15,6 +15,7 @@ from flask import Flask, g, jsonify, redirect, render_template, request
 app = Flask(__name__)
 DB_PATH = None
 WIKI_NAME = None
+scraping_in_progress = False
 
 
 def get_db():
@@ -59,11 +60,13 @@ def index():
     if q:
         rows = _search(db, q)
         return render_template(
-            "index.html", pages=rows, query=q, search=True, wiki_name=WIKI_NAME
+            "index.html", pages=rows, query=q, search=True, wiki_name=WIKI_NAME,
+            scraping=scraping_in_progress
         )
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
     return render_template(
-        "index.html", pages=rows, query="", search=False, wiki_name=WIKI_NAME
+        "index.html", pages=rows, query="", search=False, wiki_name=WIKI_NAME,
+        scraping=scraping_in_progress
     )
 
 
@@ -128,6 +131,7 @@ if __name__ == "__main__":
             sys.exit(1)
 
         def _scrape():
+            global scraping_in_progress
             cmd = [
                 sys.executable,
                 os.path.join(os.path.dirname(__file__), "scrape.py"),
@@ -136,7 +140,9 @@ if __name__ == "__main__":
             if args.db:
                 cmd += ["--db", args.db]
             subprocess.run(cmd)
+            scraping_in_progress = False
 
+        scraping_in_progress = True
         log.info("Scraping %s in background...", args.wiki)
         threading.Thread(target=_scrape, daemon=True).start()
 

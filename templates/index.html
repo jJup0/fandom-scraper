@@ -17,9 +17,13 @@
     .page-list li mark { background: #e8a87c; color: #1a1a2e; padding: 0 2px; border-radius: 2px; }
     .snip { font-size: 13px; color: #999; margin-top: 2px; }
     .count { color: #999; margin-bottom: 12px; }
+    .scraping-notice { background: #e8a87c; color: #1a1a2e; padding: 10px 14px; border-radius: 8px; margin-bottom: 16px; font-weight: 500; }
   </style>
 </head>
 <body>
+  {% if scraping %}
+  <div class="scraping-notice">⏳ Scraping in progress — results may be incomplete. Refresh for updates.</div>
+  {% endif %}
   <h1><a href="/">🔍 {{ wiki_name }} Wiki</a></h1>
   <form method="get" action="/">
     <input class="search-box" type="text" name="q" id="q" value="{{ query }}" placeholder="Search the wiki..." autofocus>
