@@ -9,16 +9,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import scrape
 import server
 
-
-@pytest.fixture
-def db(tmp_path):
-    """Fresh SQLite DB with FTS5."""
-    conn = scrape.init_db(str(tmp_path / "test.db"))
-    yield conn
-    conn.close()
-
-
-# Shared test page data - single source of truth
 TEST_PAGES = [
     (1, "Main Page", "<p>Welcome</p>", "Welcome", "[]", ""),
     (2, "Gorogoa", "<p>puzzle game</p>", "puzzle game", json.dumps(["Games"]), "2024-01-01T00:00:00Z"),
@@ -27,12 +17,19 @@ TEST_PAGES = [
     (5, "Page With Spaces", "<p>spaced</p>", "spaced", "[]", ""),
     (6, "Über Page", "<p>unicode content</p>", "unicode content", "[]", ""),
     (7, "FTS Test", "<p>xylophone zebra</p>", "xylophone zebra", json.dumps(["Music", "Animals"]), ""),
+    (8, "Empty Content", "", "", "[]", ""),
 ]
 
 
 @pytest.fixture
+def db(tmp_path):
+    conn = scrape.init_db(str(tmp_path / "test.db"))
+    yield conn
+    conn.close()
+
+
+@pytest.fixture
 def db_path(tmp_path):
-    """DB pre-populated with test pages, returns path string."""
     path = str(tmp_path / "test.db")
     conn = scrape.init_db(path)
     conn.executemany(
@@ -46,7 +43,6 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def client(db_path):
-    """Flask test client wired to the test DB."""
     server.DB_PATH = db_path
     server.WIKI_NAME = "Test Wiki"
     server.app.config["TESTING"] = True

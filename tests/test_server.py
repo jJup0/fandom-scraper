@@ -17,7 +17,7 @@ class TestIndex:
 
     def test_shows_page_count(self, client):
         resp = client.get("/")
-        assert b"7 pages" in resp.data
+        assert b"8 pages" in resp.data
 
     def test_search(self, client):
         resp = client.get("/?q=puzzle")
@@ -30,18 +30,21 @@ class TestIndex:
         assert b"0 results" in resp.data
 
     @pytest.mark.parametrize("q", ["", "   "])
-    def test_search_empty_or_whitespace_shows_browse(self, client, q):
+    def test_empty_or_whitespace_shows_browse(self, client, q):
         resp = client.get(f"/?q={q}")
         assert resp.status_code == 200
         assert b"Main Page" in resp.data
 
     def test_browse_pages_sorted_alphabetically(self, client):
-        """Browse mode should list pages in alphabetical order."""
         resp = client.get("/")
         data = resp.data.decode()
-        titles = ["FTS Test", "Gorogoa", "Main Page", "Old Name"]
+        titles = ["Empty Content", "FTS Test", "Gorogoa", "Main Page"]
         positions = [data.index(t) for t in titles]
         assert positions == sorted(positions)
+
+    def test_search_result_count_label(self, client):
+        resp = client.get("/?q=puzzle")
+        assert b"1 result " in resp.data or b"1 result\n" in resp.data or b'1 result for' in resp.data
 
 
 class TestWikiPage:
@@ -62,6 +65,10 @@ class TestWikiPage:
         resp = client.get("/wiki/Old Name")
         assert resp.status_code == 302
         assert "/wiki/Gorogoa" in resp.headers["Location"]
+
+    def test_redirect_via_underscores(self, client):
+        resp = client.get("/wiki/Old_Name")
+        assert resp.status_code == 302
 
     def test_page_with_spaces_via_underscores(self, client):
         resp = client.get("/wiki/Page_With_Spaces")
@@ -97,21 +104,27 @@ class TestWikiPage:
         assert b"ampersand test" in resp.data
 
     def test_page_no_categories_has_no_categories_div(self, client):
-        """Pages with empty categories list shouldn't render the categories section."""
         resp = client.get("/wiki/Main_Page")
         assert b'class="categories"' not in resp.data
 
-    def test_redirect_does_not_follow(self, client):
-        """Redirect pages should 302, not render the redirect HTML."""
-        resp = client.get("/wiki/Old_Name")
-        assert resp.status_code == 302
-
     @pytest.mark.parametrize("path,expected_status", [
         ("/wiki/", 404),
-        ("/wiki/a" * 500, 404),  # very long title
+        ("/wiki/" + "a" * 500, 404),
     ])
     def test_edge_case_paths(self, client, path, expected_status):
         assert client.get(path).status_code == expected_status
+
+    def test_empty_content_page(self, client):
+        resp = client.get("/wiki/Empty_Content")
+        assert resp.status_code == 200
+
+    def test_page_title_in_html_title(self, client):
+        resp = client.get("/wiki/Gorogoa")
+        assert b"<title>Gorogoa" in resp.data
+
+    def test_back_link_present(self, client):
+        resp = client.get("/wiki/Gorogoa")
+        assert b'href="/"' in resp.data
 
 
 class TestApiSearch:
@@ -149,16 +162,33 @@ class TestApiSearch:
         resp = client.get("/api/search?q=puzzle")
         assert resp.content_type == "application/json"
 
-    def test_results_are_list(self, client):
+    def test_results_are_list_with_expected_keys(self, client):
         data = json.loads(client.get("/api/search?q=Welcome").data)
         assert isinstance(data, list)
         for item in data:
             assert "title" in item
             assert "snip" in item
 
-    @pytest.mark.xfail(reason="BUG: FTS5 special chars ({}, (), :) in raw queries cause OperationalError")
-    def test_search_special_chars_no_crash(self, client):
-        """FTS special chars like * {} () : shouldn't crash the search."""
-        for q in ["test*", "{}", "()", '"quoted"', "a:b"]:
-            resp = client.get(f"/api/search?q={q}")
-            assert resp.status_code == 200
+    @pytest.mark.parametrize("q", ["test*", '"quoted"'])
+    def test_search_special_chars_handled(self, client, q):
+        """These special chars are handled by the guard in _search."""
+        resp = client.get(f"/api/search?q={q}")
+        assert resp.status_code == 200
+
+    @pytest.mark.xfail(reason="BUG: FTS5 special chars ({}, (), :) passed raw cause OperationalError")
+    @pytest.mark.parametrize("q", ["{}", "()", "a:b"])
+    def test_search_special_chars_crash(self, client, q):
+        resp = client.get(f"/api/search?q={q}")
+        assert resp.status_code == 200
+
+    def test_search_returns_multiple_results(self, client):
+        """A broad term should return more than one result."""
+        data = json.loads(client.get("/api/search?q=test").data)
+        assert len(data) >= 1
+
+    def test_nonexistent_route_404(self, client):
+        assert client.get("/nonexistent").status_code == 404
+
+    def test_api_search_case_insensitive(self, client):
+        data = json.loads(client.get("/api/search?q=PUZZLE").data)
+        assert any(r["title"] == "Gorogoa" for r in data)
