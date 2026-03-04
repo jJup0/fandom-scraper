@@ -7,12 +7,33 @@ import server
 
 TEST_PAGES = [
     (1, "Main Page", "<p>Welcome</p>", "Welcome", "[]", ""),
-    (2, "Gorogoa", "<p>puzzle game</p>", "puzzle game", json.dumps(["Games"]), "2024-01-01T00:00:00Z"),
-    (3, "Old Name", '<div class="redirectMsg"><a href="/wiki/Gorogoa">x</a></div>', "", "[]", ""),
+    (
+        2,
+        "Gorogoa",
+        "<p>puzzle game</p>",
+        "puzzle game",
+        json.dumps(["Games"]),
+        "2024-01-01T00:00:00Z",
+    ),
+    (
+        3,
+        "Old Name",
+        '<div class="redirectMsg"><a href="/wiki/Gorogoa">x</a></div>',
+        "",
+        "[]",
+        "",
+    ),
     (4, "Special & Characters", "<p>ampersand test</p>", "ampersand test", "[]", ""),
     (5, "Page With Spaces", "<p>spaced</p>", "spaced", "[]", ""),
     (6, "Über Page", "<p>unicode content</p>", "unicode content", "[]", ""),
-    (7, "FTS Test", "<p>xylophone zebra</p>", "xylophone zebra", json.dumps(["Music", "Animals"]), ""),
+    (
+        7,
+        "FTS Test",
+        "<p>xylophone zebra</p>",
+        "xylophone zebra",
+        json.dumps(["Music", "Animals"]),
+        "",
+    ),
     (8, "Empty Content", "", "", "[]", ""),
 ]
 

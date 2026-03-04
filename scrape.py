@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Scrape any Fandom wiki via MediaWiki API into SQLite with FTS5."""
+
 import argparse
 import json
 import logging
@@ -47,7 +48,9 @@ def init_wiki(name):
 def verify_wiki_exists():
     """Check that the wiki exists by making a lightweight API call."""
     try:
-        r = SESSION.get(API, params={"action": "query", "meta": "siteinfo", "format": "json"})
+        r = SESSION.get(
+            API, params={"action": "query", "meta": "siteinfo", "format": "json"}
+        )
         return r.status_code == 200 and "query" in r.json()
     except Exception:
         return False
@@ -175,8 +178,7 @@ def strip_text(html):
 def init_db(db_path):
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
-    c.executescript(
-        """
+    c.executescript("""
         CREATE TABLE IF NOT EXISTS pages (
             pageid INTEGER PRIMARY KEY,
             title TEXT NOT NULL,
@@ -198,8 +200,7 @@ def init_db(db_path):
             INSERT INTO pages_fts(pages_fts, rowid, title, plaintext) VALUES('delete', old.pageid, old.title, old.plaintext);
             INSERT INTO pages_fts(rowid, title, plaintext) VALUES (new.pageid, new.title, new.plaintext);
         END;
-    """
-    )
+    """)
     conn.commit()
     return conn
 

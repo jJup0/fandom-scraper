@@ -1,4 +1,5 @@
 """E2E tests using Playwright - starts the server and tests in a real browser."""
+
 import os
 import subprocess
 import sys
@@ -78,7 +79,9 @@ def test_static_images_load(page):
     pg.goto(f"{url}/wiki/Gorogoa")
     images = pg.locator("img").all()
     for img in images[:3]:
-        assert img.evaluate("el => el.naturalWidth") > 0 or img.get_attribute("src", "").startswith("data:")
+        assert img.evaluate("el => el.naturalWidth") > 0 or img.get_attribute(
+            "src", ""
+        ).startswith("data:")
 
 
 def test_scraping_notice_hidden_when_not_scraping(page):

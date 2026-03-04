@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Local web server to browse and search a scraped Fandom wiki."""
+
 import argparse
 import json
 import logging
@@ -35,7 +36,7 @@ def close_db(exc):
 def _search(db, q, limit=100):
     """Search with prefix matching, title matches sorted first."""
     # Strip FTS5 syntax characters that cause OperationalError
-    cleaned = re.sub(r'[{}()\:\"*]', " ", q)
+    cleaned = re.sub(r"[{}()\:\"*]", " ", q)
     words = cleaned.split()
     if not words:
         return []
@@ -60,13 +61,21 @@ def index():
     if q:
         rows = _search(db, q)
         return render_template(
-            "index.html", pages=rows, query=q, search=True, wiki_name=WIKI_NAME,
-            scraping=scraping_in_progress
+            "index.html",
+            pages=rows,
+            query=q,
+            search=True,
+            wiki_name=WIKI_NAME,
+            scraping=scraping_in_progress,
         )
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
     return render_template(
-        "index.html", pages=rows, query="", search=False, wiki_name=WIKI_NAME,
-        scraping=scraping_in_progress
+        "index.html",
+        pages=rows,
+        query="",
+        search=False,
+        wiki_name=WIKI_NAME,
+        scraping=scraping_in_progress,
     )
 
 
@@ -123,7 +132,7 @@ if __name__ == "__main__":
     DB_PATH = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
 
     if not args.no_scrape:
-        from scrape import verify_wiki_exists, init_wiki
+        from scrape import init_wiki, verify_wiki_exists
 
         init_wiki(args.wiki)
         if not verify_wiki_exists():

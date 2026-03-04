@@ -1,8 +1,8 @@
 """Live tests — run scrape.py and server.py as subprocesses, hitting real Fandom."""
+
 import pytest
 
 pytestmark = pytest.mark.live
-import json
 import os
 import subprocess
 import sys
@@ -38,8 +38,16 @@ def live_server(scraped_wiki):
     tmp, db_path = scraped_wiki
     port = 5098
     proc = subprocess.Popen(
-        [sys.executable, os.path.join(PROJECT_DIR, "server.py"), WIKI,
-         "--no-scrape", "--db", db_path, "--port", str(port)],
+        [
+            sys.executable,
+            os.path.join(PROJECT_DIR, "server.py"),
+            WIKI,
+            "--no-scrape",
+            "--db",
+            db_path,
+            "--port",
+            str(port),
+        ],
         cwd=str(tmp),
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
@@ -57,6 +65,7 @@ class TestScrape:
 
     def test_pages_scraped(self, scraped_wiki):
         import sqlite3
+
         _, db_path = scraped_wiki
         conn = sqlite3.connect(db_path)
         count = conn.execute("SELECT COUNT(*) FROM pages").fetchone()[0]
@@ -91,17 +100,32 @@ class TestNonexistentWiki:
     def test_scrape_exits_with_error(self, tmp_path):
         db_path = str(tmp_path / "bad.db")
         r = subprocess.run(
-            [sys.executable, os.path.join(PROJECT_DIR, "scrape.py"),
-             "zzznonexistentwiki999", "--db", db_path],
-            capture_output=True, text=True, timeout=30,
+            [
+                sys.executable,
+                os.path.join(PROJECT_DIR, "scrape.py"),
+                "zzznonexistentwiki999",
+                "--db",
+                db_path,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert r.returncode != 0
         assert not os.path.exists(db_path)
 
     def test_server_exits_with_error(self):
         r = subprocess.run(
-            [sys.executable, os.path.join(PROJECT_DIR, "server.py"), "zzznonexistentwiki999"],
-            capture_output=True, text=True, timeout=30,
+            [
+                sys.executable,
+                os.path.join(PROJECT_DIR, "server.py"),
+                "zzznonexistentwiki999",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         assert r.returncode != 0
-        assert "does not exist" in r.stdout.lower() or "does not exist" in r.stderr.lower()
+        assert (
+            "does not exist" in r.stdout.lower() or "does not exist" in r.stderr.lower()
+        )

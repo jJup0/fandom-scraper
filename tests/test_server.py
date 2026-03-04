@@ -1,4 +1,5 @@
 """Unit tests for server.py Flask routes."""
+
 import json
 
 import pytest
@@ -43,16 +44,21 @@ class TestIndex:
 
     def test_page_links_use_underscores(self, client):
         resp = client.get("/")
-        assert b"/wiki/Page_With_Spaces" in resp.data or b"/wiki/Page+With+Spaces" in resp.data
+        assert (
+            b"/wiki/Page_With_Spaces" in resp.data
+            or b"/wiki/Page+With+Spaces" in resp.data
+        )
 
     def test_scraping_notice_hidden_when_not_scraping(self, client):
         import server
+
         server.scraping_in_progress = False
         resp = client.get("/")
         assert b'<div class="scraping-notice">' not in resp.data
 
     def test_scraping_notice_visible_when_scraping(self, client):
         import server
+
         server.scraping_in_progress = True
         resp = client.get("/")
         assert b'<div class="scraping-notice">' in resp.data
@@ -61,6 +67,7 @@ class TestIndex:
 
     def test_scraping_notice_visible_during_search(self, client):
         import server
+
         server.scraping_in_progress = True
         resp = client.get("/?q=puzzle")
         assert b'<div class="scraping-notice">' in resp.data
@@ -106,6 +113,7 @@ class TestWikiPage:
 
     def test_css_warning_hidden_with_full_css(self, client):
         import server
+
         server.app.config["HAS_FULL_CSS"] = True
         resp = client.get("/wiki/Gorogoa")
         assert b"fallback CSS" not in resp.data
@@ -183,7 +191,9 @@ class TestApiSearch:
             assert "title" in item
             assert "snip" in item
 
-    @pytest.mark.parametrize("q", ["test*", '"quoted"', "{}", "()", "a:b", "(hello", "he{llo"])
+    @pytest.mark.parametrize(
+        "q", ["test*", '"quoted"', "{}", "()", "a:b", "(hello", "he{llo"]
+    )
     def test_search_special_chars_no_crash(self, client, q):
         resp = client.get(f"/api/search?q={q}")
         assert resp.status_code == 200
@@ -198,6 +208,7 @@ class TestApiSearch:
     def test_api_limits_to_20_results(self, db_path):
         """API search uses limit=20 vs index's limit=100."""
         import sqlite3
+
         conn = sqlite3.connect(db_path)
         for i in range(25):
             conn.execute(
@@ -208,6 +219,7 @@ class TestApiSearch:
         conn.close()
 
         import server
+
         server.DB_PATH = db_path
         with server.app.test_client() as c:
             data = json.loads(c.get("/api/search?q=commonword").data)
