@@ -4,3 +4,6 @@ static/*/
 __pycache__/
 *.pyc
 .DS_Store
+.tox/
+.pytest_cache/
+temp/
