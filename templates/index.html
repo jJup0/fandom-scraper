@@ -46,8 +46,9 @@
     q.addEventListener('input', function(){
       clearTimeout(timer);
       const v = q.value.trim();
-      if (!v) { location.href = '/'; return; }
+      if (!v) { history.replaceState(null,'','/'); location.href = '/'; return; }
       timer = setTimeout(()=>{
+        history.replaceState(null,'','/?q='+encodeURIComponent(v));
         fetch('/api/search?q='+encodeURIComponent(v))
           .then(r=>r.json()).then(data=>{
             let h = '<p class="count">'+data.length+' result'+(data.length!==1?'s':'')+'</p><ul class="page-list">';
@@ -58,7 +59,7 @@
             });
             res.innerHTML = h+'</ul>';
           });
-      }, 250);
+      }, 200);
     });
     function esc(s){const d=document.createElement('div');d.textContent=s;return d.innerHTML;}
   })();
