@@ -6,38 +6,6 @@ import sys
 import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
-import scrape
-import server
-
-
-@pytest.fixture
-def db_path(tmp_path):
-    path = str(tmp_path / "test.db")
-    conn = scrape.init_db(path)
-    conn.executemany(
-        "INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (?,?,?,?,?,?)",
-        [
-            (1, "Main Page", "<p>Welcome</p>", "Welcome", "[]", ""),
-            (2, "Gorogoa", "<p>puzzle game</p>", "puzzle game", json.dumps(["Games"]), "2024-01-01T00:00:00Z"),
-            (3, "Old Name", '<div class="redirectMsg"><a href="/wiki/Gorogoa">x</a></div>', "", "[]", ""),
-            (4, "Special & Characters", "<p>ampersand test</p>", "ampersand test", "[]", ""),
-            (5, "Page With Spaces", "<p>spaced</p>", "spaced", "[]", ""),
-        ],
-    )
-    conn.commit()
-    conn.close()
-    return path
-
-
-@pytest.fixture
-def client(db_path):
-    server.DB_PATH = db_path
-    server.WIKI_NAME = "Test Wiki"
-    server.app.config["TESTING"] = True
-    server.app.config["HAS_FULL_CSS"] = False
-    server.app.config["WIKI_SLUG"] = "testwiki"
-    with server.app.test_client() as c:
-        yield c
 
 
 class TestIndex:
@@ -45,6 +13,10 @@ class TestIndex:
         resp = client.get("/")
         assert resp.status_code == 200
         assert b"Main Page" in resp.data
+
+    def test_shows_page_count(self, client):
+        resp = client.get("/")
+        assert b"7 pages" in resp.data
 
     def test_search(self, client):
         resp = client.get("/?q=puzzle")
@@ -56,14 +28,9 @@ class TestIndex:
         assert resp.status_code == 200
         assert b"0 results" in resp.data
 
-    def test_search_empty_query(self, client):
-        resp = client.get("/?q=")
-        assert resp.status_code == 200
-        # Should show all pages (browse mode)
-        assert b"Main Page" in resp.data
-
-    def test_search_whitespace_only(self, client):
-        resp = client.get("/?q=   ")
+    @pytest.mark.parametrize("q", ["", "   "])
+    def test_search_empty_or_whitespace_shows_browse(self, client, q):
+        resp = client.get(f"/?q={q}")
         assert resp.status_code == 200
         assert b"Main Page" in resp.data
 
@@ -96,14 +63,30 @@ class TestWikiPage:
         resp = client.get("/wiki/Gorogoa")
         assert b"Games" in resp.data
 
-    def test_shows_css_warning_when_no_full_css(self, client):
+    def test_multiple_categories(self, client):
+        resp = client.get("/wiki/FTS_Test")
+        assert b"Music" in resp.data
+        assert b"Animals" in resp.data
+
+    def test_css_warning_shown_without_full_css(self, client):
         resp = client.get("/wiki/Gorogoa")
         assert b"fallback CSS" in resp.data
 
-    def test_hides_css_warning_when_full_css(self, client, db_path):
+    def test_css_warning_hidden_with_full_css(self, client):
+        import server
         server.app.config["HAS_FULL_CSS"] = True
         resp = client.get("/wiki/Gorogoa")
         assert b"fallback CSS" not in resp.data
+
+    def test_unicode_page(self, client):
+        resp = client.get("/wiki/Über_Page")
+        assert resp.status_code == 200
+        assert "unicode content".encode() in resp.data
+
+    def test_special_chars_in_title(self, client):
+        resp = client.get("/wiki/Special_&_Characters")
+        assert resp.status_code == 200
+        assert b"ampersand test" in resp.data
 
 
 class TestApiSearch:
@@ -113,25 +96,27 @@ class TestApiSearch:
         data = json.loads(resp.data)
         assert data[0]["title"] == "Gorogoa"
 
-    def test_empty_query(self, client):
-        resp = client.get("/api/search?q=")
-        assert json.loads(resp.data) == []
-
-    def test_missing_q_param(self, client):
-        resp = client.get("/api/search")
-        assert json.loads(resp.data) == []
+    @pytest.mark.parametrize("qs", ["/api/search?q=", "/api/search"])
+    def test_empty_or_missing_q(self, client, qs):
+        assert json.loads(client.get(qs).data) == []
 
     def test_prefix_matching(self, client):
-        resp = client.get("/api/search?q=puzz")
-        data = json.loads(resp.data)
+        data = json.loads(client.get("/api/search?q=puzz").data)
         assert any(r["title"] == "Gorogoa" for r in data)
 
     def test_result_has_snip(self, client):
-        resp = client.get("/api/search?q=puzzle")
-        data = json.loads(resp.data)
+        data = json.loads(client.get("/api/search?q=puzzle").data)
         assert "snip" in data[0]
 
     def test_title_match_sorted_first(self, client):
-        resp = client.get("/api/search?q=Gorogoa")
-        data = json.loads(resp.data)
+        data = json.loads(client.get("/api/search?q=Gorogoa").data)
         assert data[0]["title"] == "Gorogoa"
+
+    def test_unicode_search(self, client):
+        # FTS may or may not handle unicode well, but the endpoint shouldn't crash
+        resp = client.get("/api/search?q=unicode")
+        assert resp.status_code == 200
+
+    def test_search_xylophone(self, client):
+        data = json.loads(client.get("/api/search?q=xylophone").data)
+        assert any(r["title"] == "FTS Test" for r in data)
