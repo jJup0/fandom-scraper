@@ -66,7 +66,7 @@ def api_search():
 @app.route("/wiki/<path:title>")
 def page(title):
     db = get_db()
-    row = db.execute("SELECT * FROM pages WHERE title = ?", (title,)).fetchone()
+    row = db.execute("SELECT * FROM pages WHERE title = ?", (title.replace("_", " "),)).fetchone()
     if not row:
         return "Page not found", 404
     # Follow MediaWiki redirects

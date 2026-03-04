@@ -102,9 +102,6 @@ def rewrite_html(html, image_map):
     # Rewrite internal wiki links to local routes
     html = re.sub(r'href="https://spiritfarer\.fandom\.com/wiki/([^"]*)"',
                   r'href="/wiki/\1"', html)
-    # Replace underscores with spaces in wiki link paths
-    html = re.sub(r'href="/wiki/([^"]*)"',
-                  lambda m: 'href="/wiki/' + m.group(1).replace('_', ' ') + '"', html)
     return html
 
 
