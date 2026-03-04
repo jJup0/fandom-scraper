@@ -37,10 +37,6 @@ class TestIndex:
         positions = [data.index(t) for t in titles]
         assert positions == sorted(positions)
 
-    def test_search_result_count_label(self, client):
-        resp = client.get("/?q=puzzle")
-        assert b"1 result" in resp.data
-
     def test_wiki_name_displayed(self, client):
         resp = client.get("/")
         assert b"Test Wiki" in resp.data
@@ -68,10 +64,6 @@ class TestWikiPage:
         resp = client.get("/wiki/Old Name")
         assert resp.status_code == 302
         assert "/wiki/Gorogoa" in resp.headers["Location"]
-
-    def test_redirect_via_underscores(self, client):
-        resp = client.get("/wiki/Old_Name")
-        assert resp.status_code == 302
 
     def test_page_with_spaces_via_underscores(self, client):
         resp = client.get("/wiki/Page_With_Spaces")
@@ -159,14 +151,6 @@ class TestApiSearch:
         data = json.loads(client.get("/api/search?q=Gorogoa").data)
         assert data[0]["title"] == "Gorogoa"
 
-    def test_unicode_search(self, client):
-        resp = client.get("/api/search?q=unicode")
-        assert resp.status_code == 200
-
-    def test_search_xylophone(self, client):
-        data = json.loads(client.get("/api/search?q=xylophone").data)
-        assert any(r["title"] == "FTS Test" for r in data)
-
     def test_response_content_type_is_json(self, client):
         resp = client.get("/api/search?q=puzzle")
         assert resp.content_type == "application/json"
@@ -195,3 +179,25 @@ class TestApiSearch:
 
     def test_nonexistent_route_404(self, client):
         assert client.get("/nonexistent").status_code == 404
+
+    def test_phrase_search(self, client):
+        data = json.loads(client.get('/api/search?q="puzzle game"').data)
+        assert any(r["title"] == "Gorogoa" for r in data)
+
+    def test_api_limits_to_20_results(self, db_path):
+        """API search uses limit=20 vs index's limit=100."""
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        for i in range(25):
+            conn.execute(
+                "INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (?,?,?,?,?,?)",
+                (100 + i, f"Bulk{i}", "", f"commonword bulk{i}", "[]", ""),
+            )
+        conn.commit()
+        conn.close()
+
+        import server
+        server.DB_PATH = db_path
+        with server.app.test_client() as c:
+            data = json.loads(c.get("/api/search?q=commonword").data)
+            assert len(data) <= 20

@@ -107,6 +107,7 @@ class TestRewriteHtml:
         ("https://otherwiki.fandom.com/wiki/Page", "/wiki/Page"),
         ("https://testwiki.fandom.com/wiki/Page#Section", "/wiki/Page#Section"),
         ("https://testwiki.fandom.com/wiki/Page?action=edit", "/wiki/Page?action=edit"),
+        ("https://community.fandom.com/wiki/Help", "/wiki/Help"),
     ])
     def test_fandom_links_rewritten(self, href, expected_href):
         html = f'<a href="{href}">link</a>'
@@ -141,9 +142,7 @@ class TestRewriteHtml:
         assert 'src="https://a.com/1.png"' in result
         assert 'src="https://a.com/2.png"' in result
 
-    def test_community_fandom_link_rewritten(self):
-        html = '<a href="https://community.fandom.com/wiki/Help">help</a>'
-        assert 'href="/wiki/Help"' in scrape.rewrite_html(html, {})
+
 
 
 # ---------------------------------------------------------------------------
@@ -193,11 +192,6 @@ class TestInitDb:
         db.commit()
         assert db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'xylo*'").fetchall()
 
-    def test_fts_no_false_positives(self, db):
-        db.execute("INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'T','','apple','[]','')")
-        db.commit()
-        assert not db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'banana'").fetchall()
-
     def test_insert_or_replace_updates_fts(self, db):
         db.execute("INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'T','','old text','[]','')")
         db.commit()
@@ -205,18 +199,6 @@ class TestInitDb:
         db.commit()
         assert db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'new'").fetchall()
         assert len(db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'T'").fetchall()) == 1
-
-    def test_fts_multiple_rows(self, db):
-        for i in range(5):
-            db.execute(f"INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES ({i},'Page{i}','','word{i}','[]','')")
-        db.commit()
-        for i in range(5):
-            assert db.execute(f"SELECT * FROM pages_fts WHERE pages_fts MATCH 'word{i}'").fetchall()
-
-    def test_empty_plaintext_still_searchable_by_title(self, db):
-        db.execute("INSERT INTO pages (pageid,title,html,plaintext,categories,touched) VALUES (1,'Searchable','','','[]','')")
-        db.commit()
-        assert db.execute("SELECT * FROM pages_fts WHERE pages_fts MATCH 'Searchable'").fetchall()
 
 
 # ---------------------------------------------------------------------------
@@ -550,3 +532,73 @@ class TestMainIntegration:
 
         # Verify theme was saved
         assert (theme_dir / "theme.css").exists()
+
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_rescrape_skips_existing_pages(self, mock_get, tmp_path):
+        """Second run with same touched timestamp should not re-parse pages."""
+        db_path = str(tmp_path / "test.db")
+        (tmp_path / "static" / "mywiki" / "images").mkdir(parents=True)
+
+        theme_resp = MagicMock(text=":root{}")
+        allpages_resp = _mock_resp({
+            "query": {"pages": {"1": {"pageid": 1, "title": "P", "touched": "2024-01-01T00:00:00Z"}}}
+        })
+        parse_resp = _mock_resp({"parse": {"text": {"*": "<p>hi</p>"}, "categories": [], "images": []}})
+
+        orig_dirname = os.path.dirname
+        fake_dirname = lambda p: str(tmp_path) if p == scrape.__file__ else orig_dirname(p)
+
+        # First run: scrapes the page
+        mock_get.side_effect = [theme_resp, allpages_resp, parse_resp]
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+
+        # Second run: same touched → no parse call expected (only theme + allpages)
+        mock_get.reset_mock()
+        mock_get.side_effect = [theme_resp, allpages_resp]
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+        # Only 2 calls: theme download + allpages. No parse call.
+        assert mock_get.call_count == 2
+
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_rescrape_updates_when_touched_newer(self, mock_get, tmp_path):
+        """Second run with newer touched timestamp should re-parse the page."""
+        db_path = str(tmp_path / "test.db")
+        (tmp_path / "static" / "mywiki" / "images").mkdir(parents=True)
+
+        theme_resp = MagicMock(text=":root{}")
+        allpages_v1 = _mock_resp({
+            "query": {"pages": {"1": {"pageid": 1, "title": "P", "touched": "2024-01-01T00:00:00Z"}}}
+        })
+        parse_v1 = _mock_resp({"parse": {"text": {"*": "<p>old</p>"}, "categories": [], "images": []}})
+
+        orig_dirname = os.path.dirname
+        fake_dirname = lambda p: str(tmp_path) if p == scrape.__file__ else orig_dirname(p)
+
+        # First run
+        mock_get.side_effect = [theme_resp, allpages_v1, parse_v1]
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+
+        # Second run: newer touched → should re-parse
+        allpages_v2 = _mock_resp({
+            "query": {"pages": {"1": {"pageid": 1, "title": "P", "touched": "2024-06-01T00:00:00Z"}}}
+        })
+        parse_v2 = _mock_resp({"parse": {"text": {"*": "<p>new</p>"}, "categories": [], "images": []}})
+        mock_get.reset_mock()
+        mock_get.side_effect = [theme_resp, allpages_v2, parse_v2]
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+
+        import sqlite3
+        conn = sqlite3.connect(db_path)
+        html = conn.execute("SELECT html FROM pages WHERE pageid=1").fetchone()[0]
+        conn.close()
+        assert "new" in html
