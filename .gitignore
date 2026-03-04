@@ -1,5 +1,6 @@
 *.db
-static/images/
+*.db-journal
+static/*/images/
 __pycache__/
 *.pyc
 .DS_Store

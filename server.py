@@ -78,7 +78,7 @@ def page(title):
             from flask import redirect
             return redirect("/wiki/" + m.group(1))
     categories = json.loads(row["categories"])
-    return render_template("page.html", page=row, categories=categories, has_full_css=app.config.get("HAS_FULL_CSS", True))
+    return render_template("page.html", page=row, categories=categories, has_full_css=app.config.get("HAS_FULL_CSS", True), wiki_slug=app.config.get("WIKI_SLUG"))
 
 
 if __name__ == "__main__":
@@ -97,4 +97,5 @@ if __name__ == "__main__":
         print("\n⚠️  Full Fandom CSS not found — using fallback styles.")
         print("   For best results, see README for browser CSS extraction instructions.\n")
     app.config["HAS_FULL_CSS"] = has_full_css
+    app.config["WIKI_SLUG"] = args.wiki
     app.run(host=args.host, port=args.port, debug=True)

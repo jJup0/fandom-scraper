@@ -86,7 +86,7 @@ def download_image(url, filename):
     """Download image to static/images/, return local relative path."""
     ext = os.path.splitext(filename)[1] or ".png"
     safe_name = hashlib.md5(filename.encode()).hexdigest() + ext
-    local_path = os.path.join(os.path.dirname(__file__), "static", "images", safe_name)
+    local_path = os.path.join(os.path.dirname(__file__), "static", WIKI_NAME, "images", safe_name)
     if os.path.exists(local_path):
         return safe_name
     time.sleep(RATE_LIMIT)
@@ -101,7 +101,7 @@ def download_image(url, filename):
 def rewrite_html(html, image_map):
     """Replace fandom image/link URLs with local paths."""
     for orig_url, local_name in image_map.items():
-        html = html.replace(orig_url, f"/static/images/{local_name}")
+        html = html.replace(orig_url, f"/static/{WIKI_NAME}/images/{local_name}")
     # Rewrite data-src (lazy loaded images on fandom)
     html = re.sub(r' data-src="([^"]*)"', lambda m: f' src="{m.group(1)}"', html)
     # Rewrite internal wiki links to local routes
@@ -154,38 +154,18 @@ def main():
 
     init_wiki(args.wiki)
     db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
-    img_dir = os.path.join(os.path.dirname(__file__), "static", "images")
+    img_dir = os.path.join(os.path.dirname(__file__), "static", args.wiki, "images")
     os.makedirs(img_dir, exist_ok=True)
 
     # Download theme variables (not behind Cloudflare)
     theme_url = f"https://{args.wiki}.fandom.com/wikia.php?controller=ThemeApi&method=themeVariables"
     print(f"Downloading theme variables from {theme_url}...")
     theme_css = SESSION.get(theme_url).text
-    css_path = os.path.join(os.path.dirname(__file__), "static", "fandom-all.css")
-    if os.path.exists(css_path):
-        with open(css_path) as f:
-            existing_css = f.read()
-        if not existing_css.startswith(":root"):
-            theme_css = theme_css + "\n" + existing_css
-            with open(css_path, "w") as f:
-                f.write(theme_css)
-            print("  Prepended theme variables to existing CSS")
-    else:
-        with open(css_path, "w") as f:
-            f.write(theme_css)
-        print("  Saved theme variables (add full Fandom CSS manually for best results)")
-
-    # Download background image if referenced
-    import re as _re
-    bg_match = _re.search(r'theme-body-background-image-full:\s*url\(([^)]+)\)', theme_css)
-    if bg_match:
-        bg_url = bg_match.group(1).strip("'\"")
-        bg_path = os.path.join(img_dir, "site-background.png")
-        if not os.path.exists(bg_path):
-            print(f"  Downloading background image...")
-            r = SESSION.get(bg_url)
-            with open(bg_path, "wb") as f:
-                f.write(r.content)
+    theme_path = os.path.join(os.path.dirname(__file__), "static", args.wiki, "theme.css")
+    os.makedirs(os.path.dirname(theme_path), exist_ok=True)
+    with open(theme_path, "w") as f:
+        f.write(theme_css)
+    print(f"  Saved to static/{args.wiki}/theme.css")
 
     conn = init_db(db_path)
     c = conn.cursor()
