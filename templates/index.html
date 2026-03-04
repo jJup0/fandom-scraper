@@ -33,7 +33,7 @@
   <ul class="page-list">
     {% for p in pages %}
     <li>
-      <a href="/wiki/{{ p.title | urlencode }}">{{ p.title }}</a>
+      <a href="/wiki/{{ p.title | replace(' ', '_') | urlencode }}">{{ p.title }}</a>
       {% if search and p.snip %}<div class="snip">{{ p.snip | safe }}</div>{% endif %}
     </li>
     {% endfor %}
@@ -53,7 +53,7 @@
           .then(r=>r.json()).then(data=>{
             let h = '<p class="count">'+data.length+' result'+(data.length!==1?'s':'')+'</p><ul class="page-list">';
             data.forEach(r=>{
-              h+='<li><a href="/wiki/'+encodeURIComponent(r.title)+'">'+esc(r.title)+'</a>';
+              h+='<li><a href="/wiki/'+encodeURIComponent(r.title.replace(/ /g,'_'))+'">'+esc(r.title)+'</a>';
               if(r.snip) h+='<div class="snip">'+r.snip+'</div>';
               h+='</li>';
             });
