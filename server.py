@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Local web server to browse and search a scraped Fandom wiki."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -11,29 +13,30 @@ import subprocess
 import sys
 import threading
 
-from flask import Flask, g, jsonify, redirect, render_template, request
+from flask import Flask, Response, g, jsonify, redirect, render_template, request
+from werkzeug.wrappers import Response as WerkzeugResponse
 
-app = Flask(__name__)
-DB_PATH = None
-WIKI_NAME = None
-scraping_in_progress = False
+app: Flask = Flask(__name__)
+_db_path: str | None = None
+_wiki_name: str | None = None
+scraping_in_progress: bool = False
 
 
-def get_db():
+def get_db() -> sqlite3.Connection:
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        g.db = sqlite3.connect(_db_path)  # type: ignore[arg-type]
         g.db.row_factory = sqlite3.Row
-    return g.db
+    return g.db  # type: ignore[no-any-return]
 
 
 @app.teardown_appcontext
-def close_db(exc):
+def close_db(exc: BaseException | None) -> None:
     db = g.pop("db", None)
     if db:
         db.close()
 
 
-def _search(db, q, limit=100):
+def _search(db: sqlite3.Connection, q: str, limit: int = 100) -> list[sqlite3.Row]:
     """Search with prefix matching, title matches sorted first."""
     # Strip FTS5 syntax characters that cause OperationalError
     cleaned = re.sub(r"[{}()\:\"*]", " ", q)
@@ -55,7 +58,7 @@ def _search(db, q, limit=100):
 
 
 @app.route("/")
-def index():
+def index() -> str:
     db = get_db()
     q = request.args.get("q", "").strip()
     if q:
@@ -65,7 +68,7 @@ def index():
             pages=rows,
             query=q,
             search=True,
-            wiki_name=WIKI_NAME,
+            wiki_name=_wiki_name,
             scraping=scraping_in_progress,
         )
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
@@ -74,14 +77,13 @@ def index():
         pages=rows,
         query="",
         search=False,
-        wiki_name=WIKI_NAME,
+        wiki_name=_wiki_name,
         scraping=scraping_in_progress,
     )
 
 
 @app.route("/api/search")
-def api_search():
-
+def api_search() -> Response:
     db = get_db()
     q = request.args.get("q", "").strip()
     if not q:
@@ -91,7 +93,7 @@ def api_search():
 
 
 @app.route("/wiki/<path:title>")
-def page(title):
+def page(title: str) -> str | tuple[str, int] | WerkzeugResponse:
     db = get_db()
     row = db.execute(
         "SELECT * FROM pages WHERE title = ?", (title.replace("_", " "),)
@@ -103,13 +105,17 @@ def page(title):
         m = re.search(r'href="/wiki/([^"]+)"', row["html"])
         if m:
             return redirect("/wiki/" + m.group(1))
-    categories = json.loads(row["categories"])
+    categories: list[str] = json.loads(row["categories"])
     return render_template(
         "page.html",
         page=row,
         categories=categories,
-        has_full_css=app.config.get("HAS_FULL_CSS", True),
-        wiki_slug=app.config.get("WIKI_SLUG"),
+        has_full_css=app.config.get(  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            "HAS_FULL_CSS", True
+        ),
+        wiki_slug=app.config.get(  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
+            "WIKI_SLUG", ""
+        ),
     )
 
 
@@ -129,7 +135,7 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=5000)
     args = p.parse_args()
 
-    DB_PATH = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
+    _db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
 
     if not args.no_scrape:
         from scrape import init_wiki, verify_wiki_exists
@@ -139,7 +145,7 @@ if __name__ == "__main__":
             log.error("Wiki '%s' does not exist on Fandom.", args.wiki)
             sys.exit(1)
 
-        def _scrape():
+        def _scrape() -> None:
             global scraping_in_progress
             cmd = [
                 sys.executable,
@@ -155,7 +161,7 @@ if __name__ == "__main__":
         log.info("Scraping %s in background...", args.wiki)
         threading.Thread(target=_scrape, daemon=True).start()
 
-    WIKI_NAME = args.wiki.replace("-", " ").title()
+    _wiki_name = args.wiki.replace("-", " ").title()
     css_path = os.path.join(os.path.dirname(__file__), "static", "fandom-all.css")
     has_full_css = os.path.exists(css_path) and os.path.getsize(css_path) > 5000
     if not has_full_css:

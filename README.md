@@ -53,7 +53,7 @@ await Promise.all(
 });
 ```
 
-4. Move the downloaded file to `static/fandom-all.css`
+1. Move the downloaded file to `static/fandom-all.css`
 
 This only needs to be done once — the CSS is shared across all wikis. Per-wiki theming comes from `static/<wiki>/theme.css` which the scraper downloads automatically.
 

@@ -1,11 +1,17 @@
+from __future__ import annotations
+
 import json
+import sqlite3
+from pathlib import Path
+from typing import Generator
 
 import pytest
+from flask.testing import FlaskClient
 
 import scrape
 import server
 
-TEST_PAGES = [
+TEST_PAGES: list[tuple[int, str, str, str, str, str]] = [
     (1, "Main Page", "<p>Welcome</p>", "Welcome", "[]", ""),
     (
         2,
@@ -39,14 +45,14 @@ TEST_PAGES = [
 
 
 @pytest.fixture
-def db(tmp_path):
+def db(tmp_path: Path) -> Generator[sqlite3.Connection, None, None]:
     conn = scrape.init_db(str(tmp_path / "test.db"))
     yield conn
     conn.close()
 
 
 @pytest.fixture
-def db_path(tmp_path):
+def db_path(tmp_path: Path) -> str:
     path = str(tmp_path / "test.db")
     conn = scrape.init_db(path)
     conn.executemany(
@@ -59,9 +65,9 @@ def db_path(tmp_path):
 
 
 @pytest.fixture
-def client(db_path):
-    server.DB_PATH = db_path
-    server.WIKI_NAME = "Test Wiki"
+def client(db_path: str) -> Generator[FlaskClient, None, None]:
+    server._db_path = db_path
+    server._wiki_name = "Test Wiki"
     server.app.config["TESTING"] = True
     server.app.config["HAS_FULL_CSS"] = False
     server.app.config["WIKI_SLUG"] = "testwiki"

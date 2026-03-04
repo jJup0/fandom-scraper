@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Scrape any Fandom wiki via MediaWiki API into SQLite with FTS5."""
 
+from __future__ import annotations
+
 import argparse
 import json
 import logging
@@ -11,16 +13,29 @@ import sys
 import time
 import urllib.parse
 from datetime import datetime, timezone
+from typing import Any, TypedDict
+
+import requests
 
 logging.basicConfig(
     format="%(asctime)s [%(name)s] %(message)s", datefmt="%H:%M:%S", level=logging.INFO
 )
 log = logging.getLogger("scrape")
 
-import requests
+
+class PageInfo(TypedDict):
+    pageid: int
+    title: str
+    touched: str
 
 
-def parse_touched(s):
+class ParsedPage(TypedDict):
+    html: str
+    categories: list[str]
+    images: list[str]
+
+
+def parse_touched(s: str | None) -> datetime:
     """Parse a MediaWiki touched timestamp to a datetime."""
     if not s:
         return datetime.min.replace(tzinfo=timezone.utc)
@@ -30,44 +45,46 @@ def parse_touched(s):
         return datetime.min.replace(tzinfo=timezone.utc)
 
 
-SESSION = requests.Session()
-RATE_LIMIT = 0.5  # seconds between requests
-WIKI_NAME = None
-API = None
+SESSION: requests.Session = requests.Session()
+RATE_LIMIT: float = 0.5  # seconds between requests
+_wiki_name: str | None = None
+_api_url: str | None = None
 
 
-def init_wiki(name):
-    global WIKI_NAME, API
-    WIKI_NAME = name
-    API = f"https://{name}.fandom.com/api.php"
+def init_wiki(name: str) -> None:
+    global _wiki_name, _api_url
+    _wiki_name = name
+    _api_url = f"https://{name}.fandom.com/api.php"
     SESSION.headers["User-Agent"] = (
         f"FandomWikiMirror/1.0 ({name}; personal offline use; polite)"
     )
 
 
-def verify_wiki_exists():
+def verify_wiki_exists() -> bool:
     """Check that the wiki exists by making a lightweight API call."""
     try:
         r = SESSION.get(
-            API, params={"action": "query", "meta": "siteinfo", "format": "json"}
+            _api_url,  # type: ignore[arg-type]
+            params={"action": "query", "meta": "siteinfo", "format": "json"},
         )
         return r.status_code == 200 and "query" in r.json()
     except Exception:
         return False
 
 
-def api_get(params):
+def api_get(params: dict[str, Any]) -> dict[str, Any]:
     params["format"] = "json"
     time.sleep(RATE_LIMIT)
-    r = SESSION.get(API, params=params)
+    r = SESSION.get(_api_url, params=params)  # type: ignore[arg-type]
     r.raise_for_status()
-    return r.json()
+    result: dict[str, Any] = r.json()
+    return result
 
 
-def get_all_pages():
+def get_all_pages() -> list[PageInfo]:
     """Return list of {pageid, title, touched} for all content pages (ns=0)."""
-    pages = []
-    params = {
+    pages: list[PageInfo] = []
+    params: dict[str, Any] = {
         "action": "query",
         "list": "allpages",
         "aplimit": "500",
@@ -82,11 +99,11 @@ def get_all_pages():
         if "query" in data and "pages" in data["query"]:
             for p in data["query"]["pages"].values():
                 pages.append(
-                    {
-                        "pageid": p["pageid"],
-                        "title": p["title"],
-                        "touched": p.get("touched", ""),
-                    }
+                    PageInfo(
+                        pageid=p["pageid"],
+                        title=p["title"],
+                        touched=p.get("touched", ""),
+                    )
                 )
         log.info("enumerated %d pages...", len(pages))
         if "continue" not in data:
@@ -96,7 +113,7 @@ def get_all_pages():
     return pages
 
 
-def get_parsed_page(title):
+def get_parsed_page(title: str) -> ParsedPage | None:
     """Return parsed HTML and categories for a page."""
     data = api_get(
         {
@@ -109,16 +126,16 @@ def get_parsed_page(title):
     if "error" in data:
         return None
     p = data["parse"]
-    return {
-        "html": p["text"]["*"],
-        "categories": [c["*"] for c in p.get("categories", [])],
-        "images": [img for img in p.get("images", [])],
-    }
+    return ParsedPage(
+        html=p["text"]["*"],
+        categories=[c["*"] for c in p.get("categories", [])],
+        images=[img for img in p.get("images", [])],
+    )
 
 
-def get_image_urls(filenames):
+def get_image_urls(filenames: list[str]) -> dict[str, str]:
     """Batch-resolve image filenames to URLs (up to 50 at a time)."""
-    urls = {}
+    urls: dict[str, str] = {}
     for i in range(0, len(filenames), 50):
         batch = filenames[i : i + 50]
         titles = "|".join("File:" + f for f in batch)
@@ -137,11 +154,11 @@ def get_image_urls(filenames):
     return urls
 
 
-def download_image(url, filename):
+def download_image(url: str, filename: str) -> str:
     """Download image to static/images/, return local relative path."""
     safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
     local_path = os.path.join(
-        os.path.dirname(__file__), "static", WIKI_NAME, "images", safe_name
+        os.path.dirname(__file__), "static", _wiki_name or "", "images", safe_name
     )
     if os.path.exists(local_path):
         return safe_name
@@ -155,10 +172,10 @@ def download_image(url, filename):
     return safe_name
 
 
-def rewrite_html(html, image_map):
+def rewrite_html(html: str, image_map: dict[str, str]) -> str:
     """Replace fandom image/link URLs with local paths."""
     for orig_url, local_name in image_map.items():
-        html = html.replace(orig_url, f"/static/{WIKI_NAME}/images/{local_name}")
+        html = html.replace(orig_url, f"/static/{_wiki_name}/images/{local_name}")
     # Rewrite data-src (lazy loaded images on fandom)
     html = re.sub(r' data-src="([^"]*)"', lambda m: f' src="{m.group(1)}"', html)
     # Rewrite internal wiki links to local routes
@@ -168,14 +185,14 @@ def rewrite_html(html, image_map):
     return html
 
 
-def strip_text(html):
+def strip_text(html: str) -> str:
     """Rough plaintext extraction for FTS indexing."""
     text = re.sub(r"<[^>]+>", " ", html)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
-def init_db(db_path):
+def init_db(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path)
     c = conn.cursor()
     c.executescript("""
@@ -205,7 +222,7 @@ def init_db(db_path):
     return conn
 
 
-def main():
+def main() -> None:
     parser = argparse.ArgumentParser(description="Scrape a Fandom wiki into SQLite")
     parser.add_argument(
         "wiki", help="Wiki subdomain (e.g. spiritfarer, hollowknight, stardewvalley)"
@@ -220,7 +237,7 @@ def main():
         log.error("Wiki '%s' does not exist on Fandom. Aborting.", args.wiki)
         sys.exit(1)
 
-    db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
+    db_path: str = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
     img_dir = os.path.join(os.path.dirname(__file__), "static", args.wiki, "images")
     os.makedirs(img_dir, exist_ok=True)
 
@@ -240,7 +257,7 @@ def main():
     c = conn.cursor()
 
     # Track what we already have
-    existing = {
+    existing: dict[int, str] = {
         r[0]: r[1] for r in c.execute("SELECT pageid, touched FROM pages").fetchall()
     }
 
@@ -269,7 +286,7 @@ def main():
                 p["touched"],
             )
 
-    all_image_filenames = set()
+    all_image_filenames: set[str] = set()
 
     for i, page in enumerate(stale):
         log.info("[%d/%d] %s", i + 1, len(stale), page["title"])
@@ -315,7 +332,7 @@ def main():
         len(all_image_filenames) - len(needed),
     )
     image_urls = get_image_urls(needed)
-    image_map = {}  # remote_url -> local_filename
+    image_map: dict[str, str] = {}  # remote_url -> local_filename
     for fname, url in image_urls.items():
         try:
             local = download_image(url, fname)
