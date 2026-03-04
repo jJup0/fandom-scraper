@@ -218,6 +218,39 @@ class TestInitWiki:
 
 
 # ---------------------------------------------------------------------------
+# verify_wiki_exists
+# ---------------------------------------------------------------------------
+class TestVerifyWikiExists:
+    @pytest.fixture(autouse=True)
+    def _setup(self):
+        scrape.API = "https://test.fandom.com/api.php"
+
+    @patch.object(scrape.SESSION, "get")
+    def test_returns_true_for_valid_wiki(self, mock_get):
+        mock_get.return_value = _mock_resp({"query": {"general": {"sitename": "Test"}}})
+        mock_get.return_value.status_code = 200
+        assert scrape.verify_wiki_exists() is True
+
+    @patch.object(scrape.SESSION, "get")
+    def test_returns_false_on_404(self, mock_get):
+        mock_get.return_value = _mock_resp({})
+        mock_get.return_value.status_code = 404
+        assert scrape.verify_wiki_exists() is False
+
+    @patch.object(scrape.SESSION, "get")
+    def test_returns_false_on_network_error(self, mock_get):
+        mock_get.side_effect = Exception("connection refused")
+        assert scrape.verify_wiki_exists() is False
+
+    @patch.object(scrape.SESSION, "get")
+    def test_returns_false_on_non_json_response(self, mock_get):
+        resp = MagicMock(status_code=200)
+        resp.json.side_effect = ValueError("not json")
+        mock_get.return_value = resp
+        assert scrape.verify_wiki_exists() is False
+
+
+# ---------------------------------------------------------------------------
 # api_get
 # ---------------------------------------------------------------------------
 class TestApiGet:
@@ -471,9 +504,10 @@ class TestDownloadImage:
 class TestMainIntegration:
     """Test the main scrape flow with mocked HTTP."""
 
+    @patch("scrape.verify_wiki_exists", return_value=True)
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
-    def test_scrape_stores_and_rewrites(self, mock_get, tmp_path):
+    def test_scrape_stores_and_rewrites(self, mock_get, mock_verify, tmp_path):
         db_path = str(tmp_path / "test.db")
         img_dir = tmp_path / "static" / "mywiki" / "images"
         img_dir.mkdir(parents=True)
@@ -533,9 +567,10 @@ class TestMainIntegration:
         # Verify theme was saved
         assert (theme_dir / "theme.css").exists()
 
+    @patch("scrape.verify_wiki_exists", return_value=True)
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
-    def test_rescrape_skips_existing_pages(self, mock_get, tmp_path):
+    def test_rescrape_skips_existing_pages(self, mock_get, mock_verify, tmp_path):
         """Second run with same touched timestamp should not re-parse pages."""
         db_path = str(tmp_path / "test.db")
         (tmp_path / "static" / "mywiki" / "images").mkdir(parents=True)
@@ -564,9 +599,10 @@ class TestMainIntegration:
         # Only 2 calls: theme download + allpages. No parse call.
         assert mock_get.call_count == 2
 
+    @patch("scrape.verify_wiki_exists", return_value=True)
     @patch.object(scrape, "RATE_LIMIT", 0)
     @patch.object(scrape.SESSION, "get")
-    def test_rescrape_updates_when_touched_newer(self, mock_get, tmp_path):
+    def test_rescrape_updates_when_touched_newer(self, mock_get, mock_verify, tmp_path):
         """Second run with newer touched timestamp should re-parse the page."""
         db_path = str(tmp_path / "test.db")
         (tmp_path / "static" / "mywiki" / "images").mkdir(parents=True)
@@ -602,3 +638,22 @@ class TestMainIntegration:
         html = conn.execute("SELECT html FROM pages WHERE pageid=1").fetchone()[0]
         conn.close()
         assert "new" in html
+
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_nonexistent_wiki_creates_no_files(self, mock_get, tmp_path):
+        db_path = str(tmp_path / "test.db")
+        resp = MagicMock(status_code=404)
+        resp.json.return_value = {}
+        mock_get.return_value = resp
+
+        orig_dirname = os.path.dirname
+        fake_dirname = lambda p: str(tmp_path) if p == scrape.__file__ else orig_dirname(p)
+
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "fakewiki", "--db", db_path]):
+                with pytest.raises(SystemExit):
+                    scrape.main()
+
+        assert not os.path.exists(db_path)
+        assert not os.path.exists(tmp_path / "static" / "fakewiki")

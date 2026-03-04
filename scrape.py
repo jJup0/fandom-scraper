@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import sqlite3
+import sys
 import time
 import urllib.parse
 from datetime import datetime, timezone
@@ -41,6 +42,15 @@ def init_wiki(name):
     SESSION.headers["User-Agent"] = (
         f"FandomWikiMirror/1.0 ({name}; personal offline use; polite)"
     )
+
+
+def verify_wiki_exists():
+    """Check that the wiki exists by making a lightweight API call."""
+    try:
+        r = SESSION.get(API, params={"action": "query", "meta": "siteinfo", "format": "json"})
+        return r.status_code == 200 and "query" in r.json()
+    except Exception:
+        return False
 
 
 def api_get(params):
@@ -203,6 +213,12 @@ def main():
     args = parser.parse_args()
 
     init_wiki(args.wiki)
+
+    log.info("Verifying wiki '%s' exists...", args.wiki)
+    if not verify_wiki_exists():
+        log.error("Wiki '%s' does not exist on Fandom. Aborting.", args.wiki)
+        sys.exit(1)
+
     db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
     img_dir = os.path.join(os.path.dirname(__file__), "static", args.wiki, "images")
     os.makedirs(img_dir, exist_ok=True)
