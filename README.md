@@ -21,13 +21,40 @@ Scrapes an entire wiki via the MediaWiki API, stores it in SQLite with FTS5 full
 ```bash
 pip install -r requirements.txt
 
-# Scrape (takes ~10-15 min with rate limiting)
-python scrape.py
+# Scrape any Fandom wiki (e.g. spiritfarer, hollowknight, stardewvalley)
+python scrape.py spiritfarer
 
 # Serve
-python server.py --host 0.0.0.0 --port 5000
+python server.py spiritfarer --host 0.0.0.0 --port 5000
 # Open http://localhost:5000
 ```
+
+This gives you a fully functional wiki mirror with theme colors, background image, and decent styling out of the box.
+
+### Optional: Full Fandom CSS (best visual fidelity)
+
+The scraper auto-downloads theme variables (colors, fonts, background), but Fandom's full layout CSS is behind Cloudflare and can't be fetched programmatically. For pixel-perfect styling, extract it from your browser:
+
+1. Open any page on the wiki (e.g. `https://spiritfarer.fandom.com/wiki/Air_Draft`)
+2. Open browser console (F12 → Console)
+3. Paste and run:
+
+```js
+await Promise.all(
+  [...document.querySelectorAll('link[rel="stylesheet"]')].map(async l => {
+    const r = await fetch(l.href);
+    return {href: l.href, css: await r.text()};
+  })
+).then(sheets => {
+  const blob = new Blob([sheets.map(s => `/* ${s.href} */\n${s.css}`).join('\n\n')], {type:'text/css'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+  a.download = 'fandom-all.css'; a.click();
+});
+```
+
+4. Move the downloaded file to `static/fandom-all.css` (the scraper will auto-prepend theme variables on next run)
+
+Without this step, the built-in fallback CSS handles infoboxes, tables, tabs, and galleries — just not pixel-perfect to Fandom's layout.
 
 ## Architecture
 
