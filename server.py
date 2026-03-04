@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local web server to browse and search the scraped Spiritfarer wiki."""
+"""Local web server to browse and search a scraped Fandom wiki."""
 import json
 import os
 import sqlite3
@@ -7,7 +7,8 @@ import sqlite3
 from flask import Flask, g, render_template, request
 
 app = Flask(__name__)
-DB_PATH = os.path.join(os.path.dirname(__file__), "wiki.db")
+DB_PATH = None
+WIKI_NAME = None
 
 
 def get_db():
@@ -47,9 +48,9 @@ def index():
     q = request.args.get("q", "").strip()
     if q:
         rows = _search(db, q)
-        return render_template("index.html", pages=rows, query=q, search=True)
+        return render_template("index.html", pages=rows, query=q, search=True, wiki_name=WIKI_NAME)
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
-    return render_template("index.html", pages=rows, query="", search=False)
+    return render_template("index.html", pages=rows, query="", search=False, wiki_name=WIKI_NAME)
 
 
 @app.route("/api/search")
@@ -83,7 +84,11 @@ def page(title):
 if __name__ == "__main__":
     import argparse
     p = argparse.ArgumentParser()
+    p.add_argument("wiki", help="Wiki name (e.g. spiritfarer)")
+    p.add_argument("--db", default=None, help="Database path (default: <wiki>.db)")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
     args = p.parse_args()
+    WIKI_NAME = args.wiki.replace("-", " ").title()
+    DB_PATH = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
     app.run(host=args.host, port=args.port, debug=True)

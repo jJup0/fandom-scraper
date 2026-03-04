@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Scrape Spiritfarer Fandom wiki via MediaWiki API into SQLite with FTS5."""
+"""Scrape any Fandom wiki via MediaWiki API into SQLite with FTS5."""
+import argparse
 import hashlib
 import json
 import os
@@ -10,13 +11,17 @@ import urllib.parse
 
 import requests
 
-API = "https://spiritfarer.fandom.com/api.php"
-DB_PATH = os.path.join(os.path.dirname(__file__), "wiki.db")
-IMG_DIR = os.path.join(os.path.dirname(__file__), "static", "images")
 SESSION = requests.Session()
-SESSION.headers["User-Agent"] = "SpiritfarerWikiMirror/1.0 (personal offline use; polite)"
-
 RATE_LIMIT = 0.5  # seconds between requests
+WIKI_NAME = None
+API = None
+
+
+def init_wiki(name):
+    global WIKI_NAME, API
+    WIKI_NAME = name
+    API = f"https://{name}.fandom.com/api.php"
+    SESSION.headers["User-Agent"] = f"FandomWikiMirror/1.0 ({name}; personal offline use; polite)"
 
 
 def api_get(params):
@@ -81,7 +86,7 @@ def download_image(url, filename):
     """Download image to static/images/, return local relative path."""
     ext = os.path.splitext(filename)[1] or ".png"
     safe_name = hashlib.md5(filename.encode()).hexdigest() + ext
-    local_path = os.path.join(IMG_DIR, safe_name)
+    local_path = os.path.join(os.path.dirname(__file__), "static", "images", safe_name)
     if os.path.exists(local_path):
         return safe_name
     time.sleep(RATE_LIMIT)
@@ -100,7 +105,7 @@ def rewrite_html(html, image_map):
     # Rewrite data-src (lazy loaded images on fandom)
     html = re.sub(r' data-src="([^"]*)"', lambda m: f' src="{m.group(1)}"', html)
     # Rewrite internal wiki links to local routes
-    html = re.sub(r'href="https://spiritfarer\.fandom\.com/wiki/([^"]*)"',
+    html = re.sub(r'href="https://[^"]*\.fandom\.com/wiki/([^"]*)"',
                   r'href="/wiki/\1"', html)
     return html
 
@@ -112,8 +117,8 @@ def strip_text(html):
     return text.strip()
 
 
-def init_db():
-    conn = sqlite3.connect(DB_PATH)
+def init_db(db_path):
+    conn = sqlite3.connect(db_path)
     c = conn.cursor()
     c.executescript("""
         CREATE TABLE IF NOT EXISTS pages (
@@ -142,8 +147,47 @@ def init_db():
 
 
 def main():
-    os.makedirs(IMG_DIR, exist_ok=True)
-    conn = init_db()
+    parser = argparse.ArgumentParser(description="Scrape a Fandom wiki into SQLite")
+    parser.add_argument("wiki", help="Wiki subdomain (e.g. spiritfarer, hollowknight, stardewvalley)")
+    parser.add_argument("--db", default=None, help="Database path (default: <wiki>.db)")
+    args = parser.parse_args()
+
+    init_wiki(args.wiki)
+    db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
+    img_dir = os.path.join(os.path.dirname(__file__), "static", "images")
+    os.makedirs(img_dir, exist_ok=True)
+
+    # Download theme variables (not behind Cloudflare)
+    theme_url = f"https://{args.wiki}.fandom.com/wikia.php?controller=ThemeApi&method=themeVariables"
+    print(f"Downloading theme variables from {theme_url}...")
+    theme_css = SESSION.get(theme_url).text
+    css_path = os.path.join(os.path.dirname(__file__), "static", "fandom-all.css")
+    if os.path.exists(css_path):
+        with open(css_path) as f:
+            existing_css = f.read()
+        if not existing_css.startswith(":root"):
+            theme_css = theme_css + "\n" + existing_css
+            with open(css_path, "w") as f:
+                f.write(theme_css)
+            print("  Prepended theme variables to existing CSS")
+    else:
+        with open(css_path, "w") as f:
+            f.write(theme_css)
+        print("  Saved theme variables (add full Fandom CSS manually for best results)")
+
+    # Download background image if referenced
+    import re as _re
+    bg_match = _re.search(r'theme-body-background-image-full:\s*url\(([^)]+)\)', theme_css)
+    if bg_match:
+        bg_url = bg_match.group(1).strip("'\"")
+        bg_path = os.path.join(img_dir, "site-background.png")
+        if not os.path.exists(bg_path):
+            print(f"  Downloading background image...")
+            r = SESSION.get(bg_url)
+            with open(bg_path, "wb") as f:
+                f.write(r.content)
+
+    conn = init_db(db_path)
     c = conn.cursor()
 
     # Track what we already have
