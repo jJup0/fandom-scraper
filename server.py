@@ -120,6 +120,12 @@ if __name__ == "__main__":
     DB_PATH = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
 
     if not args.no_scrape:
+        from scrape import verify_wiki_exists, init_wiki
+
+        init_wiki(args.wiki)
+        if not verify_wiki_exists():
+            log.error("Wiki '%s' does not exist on Fandom.", args.wiki)
+            sys.exit(1)
 
         def _scrape():
             cmd = [
