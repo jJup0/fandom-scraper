@@ -100,9 +100,11 @@ def rewrite_html(html, image_map):
     # Rewrite data-src (lazy loaded images on fandom)
     html = re.sub(r' data-src="([^"]*)"', lambda m: f' src="{m.group(1)}"', html)
     # Rewrite internal wiki links to local routes
-    html = html.replace('href="/wiki/', 'href="/wiki/')
     html = re.sub(r'href="https://spiritfarer\.fandom\.com/wiki/([^"]*)"',
                   r'href="/wiki/\1"', html)
+    # Replace underscores with spaces in wiki link paths
+    html = re.sub(r'href="/wiki/([^"]*)"',
+                  lambda m: 'href="/wiki/' + m.group(1).replace('_', ' ') + '"', html)
     return html
 
 

@@ -69,6 +69,13 @@ def page(title):
     row = db.execute("SELECT * FROM pages WHERE title = ?", (title,)).fetchone()
     if not row:
         return "Page not found", 404
+    # Follow MediaWiki redirects
+    if '<div class="redirectMsg">' in row["html"]:
+        import re
+        m = re.search(r'href="/wiki/([^"]+)"', row["html"])
+        if m:
+            from flask import redirect
+            return redirect("/wiki/" + m.group(1))
     categories = json.loads(row["categories"])
     return render_template("page.html", page=row, categories=categories)
 
