@@ -63,6 +63,8 @@
   <script>document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='F'){e.preventDefault();window.location.href='/';}});
   // Fallback: if local image missing, try proxy to fetch from remote (#5)
   document.querySelectorAll('.wiki-content img').forEach(img=>{
+    img.classList.remove('lazyload');
+    img.removeAttribute('data-src');
     img.addEventListener('error',function(){
       const name=this.dataset.imageName||this.dataset.imageKey;
       if(name&&!this.dataset.proxyAttempted){
