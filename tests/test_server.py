@@ -61,26 +61,46 @@ class TestIndex:
     ) -> None:
         import server
 
-        server.scraping_in_progress = False
+        server._status_path = "/nonexistent/.status"
         resp = client.get("/")
         assert b'<div class="scraping-notice">' not in resp.data
 
-    def test_scraping_notice_visible_when_scraping(self, client: FlaskClient) -> None:
+    def test_scraping_notice_visible_when_scraping_pages(
+        self, client: FlaskClient, tmp_path: Path
+    ) -> None:
         import server
 
-        server.scraping_in_progress = True
+        status = tmp_path / ".test.status"
+        status.write_text("pages")
+        server._status_path = str(status)
         resp = client.get("/")
         assert b'<div class="scraping-notice">' in resp.data
         assert b"Scraping in progress" in resp.data
-        server.scraping_in_progress = False
+        server._status_path = None
 
-    def test_scraping_notice_visible_during_search(self, client: FlaskClient) -> None:
+    def test_scraping_notice_hidden_during_image_phase(
+        self, client: FlaskClient, tmp_path: Path
+    ) -> None:
         import server
 
-        server.scraping_in_progress = True
+        status = tmp_path / ".test.status"
+        status.write_text("images")
+        server._status_path = str(status)
+        resp = client.get("/")
+        assert b'<div class="scraping-notice">' not in resp.data
+        server._status_path = None
+
+    def test_scraping_notice_visible_during_search(
+        self, client: FlaskClient, tmp_path: Path
+    ) -> None:
+        import server
+
+        status = tmp_path / ".test.status"
+        status.write_text("pages")
+        server._status_path = str(status)
         resp = client.get("/?q=puzzle")
         assert b'<div class="scraping-notice">' in resp.data
-        server.scraping_in_progress = False
+        server._status_path = None
 
 
 class TestWikiPage:
@@ -89,8 +109,42 @@ class TestWikiPage:
         assert resp.status_code == 200
         assert b"puzzle game" in resp.data
 
-    def test_not_found(self, client: FlaskClient) -> None:
-        assert client.get("/wiki/DoesNotExist").status_code == 404
+    def test_not_found_shows_fandom_link(self, client: FlaskClient) -> None:
+        resp = client.get("/wiki/DoesNotExist")
+        assert resp.status_code == 404
+        assert b"fandom.com" in resp.data
+
+    @patch("server.http_requests.get")
+    def test_on_demand_fetch_from_fandom(
+        self, mock_get: MagicMock, client: FlaskClient
+    ) -> None:
+        api_resp = MagicMock()
+        api_resp.json.return_value = {
+            "parse": {
+                "title": "NewPage",
+                "text": {"*": "<p>fetched content</p>"},
+                "categories": [],
+                "images": [],
+            }
+        }
+        mock_get.return_value = api_resp
+        resp = client.get("/wiki/NewPage")
+        assert resp.status_code == 200
+        assert b"fetched content" in resp.data
+
+    @patch("server.http_requests.get")
+    def test_on_demand_fetch_failure_shows_fandom_link(
+        self, mock_get: MagicMock, client: FlaskClient
+    ) -> None:
+        mock_get.side_effect = Exception("timeout")
+        resp = client.get("/wiki/FailPage")
+        assert resp.status_code == 404
+        assert b"fandom.com" in resp.data
+
+    def test_fandom_link_on_existing_page(self, client: FlaskClient) -> None:
+        resp = client.get("/wiki/Gorogoa")
+        assert b"View on Fandom" in resp.data
+        assert b"testwiki.fandom.com" in resp.data
 
     def test_underscore_to_space(self, client: FlaskClient) -> None:
         resp = client.get("/wiki/Main_Page")
@@ -312,3 +366,58 @@ class TestApiSearch:
         with server.app.test_client() as c:
             data = json.loads(c.get("/api/search?q=commonword").data)
             assert len(data) <= 20
+
+    @patch("server.http_requests.get")
+    def test_proxy_search_during_page_scraping(
+        self, mock_get: MagicMock, client: FlaskClient, tmp_path: Path
+    ) -> None:
+        import server
+
+        status = tmp_path / ".test.status"
+        status.write_text("pages")
+        server._status_path = str(status)
+
+        api_resp = MagicMock()
+        api_resp.json.return_value = [
+            "test",
+            ["RemotePage", "RemoteOther"],
+        ]
+        mock_get.return_value = api_resp
+
+        data = json.loads(client.get("/api/search?q=test").data)
+        titles = [r["title"] for r in data]
+        assert "RemotePage" in titles
+        server._status_path = None
+
+    def test_no_proxy_search_during_image_phase(
+        self, client: FlaskClient, tmp_path: Path
+    ) -> None:
+        import server
+
+        status = tmp_path / ".test.status"
+        status.write_text("images")
+        server._status_path = str(status)
+
+        data = json.loads(client.get("/api/search?q=puzzle").data)
+        # Should only have local results, no "(from Fandom)" snips
+        assert all(r.get("snip", "") != "(from Fandom)" for r in data)
+        server._status_path = None
+
+    @patch("server.http_requests.get")
+    def test_proxy_search_deduplicates(
+        self, mock_get: MagicMock, client: FlaskClient, tmp_path: Path
+    ) -> None:
+        import server
+
+        status = tmp_path / ".test.status"
+        status.write_text("pages")
+        server._status_path = str(status)
+
+        api_resp = MagicMock()
+        api_resp.json.return_value = ["gorogoa", ["Gorogoa"]]
+        mock_get.return_value = api_resp
+
+        data = json.loads(client.get("/api/search?q=gorogoa").data)
+        titles = [r["title"] for r in data]
+        assert titles.count("Gorogoa") == 1
+        server._status_path = None

@@ -268,6 +268,11 @@ def main() -> None:
     conn = init_db(db_path)
     c = conn.cursor()
 
+    # Signal: scraping pages (#10)
+    status_path = os.path.join(os.path.dirname(db_path), f".{args.wiki}.status")
+    with open(status_path, "w") as f:
+        f.write("pages")
+
     # Track what we already have
     existing: dict[int, str] = {
         r[0]: r[1] for r in c.execute("SELECT pageid, touched FROM pages").fetchall()
@@ -346,6 +351,11 @@ def main() -> None:
 
     conn.commit()
 
+    # Signal: pages done, images phase starting (#10)
+    status_path = os.path.join(os.path.dirname(db_path), f".{args.wiki}.status")
+    with open(status_path, "w") as f:
+        f.write("images")
+
     # Catch up: download missing images for already-stored pages
     all_image_filenames: set[str] = set()
     for row in c.execute("SELECT html FROM pages"):
@@ -390,6 +400,9 @@ def main() -> None:
             conn.commit()
 
     conn.close()
+    # Signal: all done (#10)
+    if os.path.exists(status_path):
+        os.remove(status_path)
     log.info("Done!")
 
 

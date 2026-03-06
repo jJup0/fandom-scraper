@@ -29,7 +29,15 @@ log = logging.getLogger("server")
 app: Flask = Flask(__name__)
 _db_path: str | None = None
 _wiki_name: str | None = None
-scraping_in_progress: bool = False
+_status_path: str | None = None
+
+
+def _scrape_status() -> str | None:
+    """Return 'pages', 'images', or None (done/not scraping)."""
+    if _status_path and os.path.exists(_status_path):
+        with open(_status_path) as f:
+            return f.read().strip() or None
+    return None
 
 
 def get_db() -> sqlite3.Connection:
@@ -80,7 +88,7 @@ def index() -> str:
             query=q,
             search=True,
             wiki_name=_wiki_name,
-            scraping=scraping_in_progress,
+            scraping=_scrape_status() == "pages",
         )
     rows = db.execute("SELECT pageid, title FROM pages ORDER BY title").fetchall()
     return render_template(
@@ -89,7 +97,7 @@ def index() -> str:
         query="",
         search=False,
         wiki_name=_wiki_name,
-        scraping=scraping_in_progress,
+        scraping=_scrape_status() == "pages",
     )
 
 
@@ -123,8 +131,8 @@ def api_search() -> Response:
         return jsonify([])
     local = _search(db, q, limit=20)
     results = [{"title": r["title"], "snip": r["snip"]} for r in local]
-    # Merge remote results while scraping (#9)
-    if scraping_in_progress:
+    # Merge remote results only while pages are being scraped (#9, #10)
+    if _scrape_status() == "pages":
         wiki_slug: str = app.config.get("WIKI_SLUG", "")  # type: ignore[assignment]
         local_titles = {r["title"] for r in results}
         remote = _remote_search(q, wiki_slug)
@@ -263,6 +271,7 @@ if __name__ == "__main__":
     )
 
     _db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
+    _status_path = os.path.join(os.path.dirname(_db_path), f".{args.wiki}.status")
 
     if not args.no_scrape:
         from scrape import init_wiki, verify_wiki_exists
@@ -273,7 +282,6 @@ if __name__ == "__main__":
             sys.exit(1)
 
         def _scrape() -> None:
-            global scraping_in_progress
             cmd = [
                 sys.executable,
                 os.path.join(os.path.dirname(__file__), "scrape.py"),
@@ -282,9 +290,7 @@ if __name__ == "__main__":
             if args.db:
                 cmd += ["--db", args.db]
             subprocess.run(cmd)
-            scraping_in_progress = False
 
-        scraping_in_progress = True
         log.info("Scraping %s in background...", args.wiki)
         threading.Thread(target=_scrape, daemon=True).start()
 
