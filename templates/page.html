@@ -60,6 +60,22 @@
   {% endif %}
   <div class="wiki-content">{{ page.html | safe }}</div>
   </div>
-  <script>document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='F'){e.preventDefault();window.location.href='/';}});</script>
+  <script>document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='F'){e.preventDefault();window.location.href='/';}});
+  // Fallback: if local image missing, try proxy to fetch from remote (#5)
+  document.querySelectorAll('.wiki-content img').forEach(img=>{
+    img.addEventListener('error',function(){
+      const name=this.dataset.imageName||this.dataset.imageKey;
+      if(name&&!this.dataset.proxyAttempted){
+        this.dataset.proxyAttempted='1';
+        this.src='/image-proxy/{{wiki_slug}}/'+encodeURIComponent(name);
+      }
+    });
+    // Also handle images still showing the placeholder base64 gif
+    if(img.src&&img.src.includes('data:image/gif;base64')&&(img.dataset.imageName||img.dataset.imageKey)){
+      const name=img.dataset.imageName||img.dataset.imageKey;
+      img.src='/image-proxy/{{wiki_slug}}/'+encodeURIComponent(name);
+    }
+  });
+  </script>
 </body>
 </html>

@@ -13,7 +13,17 @@ import subprocess
 import sys
 import threading
 
-from flask import Flask, Response, g, jsonify, redirect, render_template, request
+import requests as http_requests
+from flask import (
+    Flask,
+    Response,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_file,
+)
 
 app: Flask = Flask(__name__)
 _db_path: str | None = None
@@ -115,6 +125,48 @@ def page(title: str) -> str | tuple[str, int] | Response:
         has_full_css=has_full_css,
         wiki_slug=wiki_slug,
     )
+
+
+@app.route("/image-proxy/<wiki>/<path:filename>")
+def image_proxy(wiki: str, filename: str) -> Response | tuple[str, int]:
+    """Fetch missing image from remote, cache locally, and serve it (#5)."""
+    safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
+    local_path = os.path.join(
+        os.path.dirname(__file__), "static", wiki, "images", safe_name
+    )
+    if os.path.exists(local_path):
+        return send_file(local_path)
+    # Resolve URL via MediaWiki API
+    api_url = f"https://{wiki}.fandom.com/api.php"
+    try:
+        r = http_requests.get(
+            api_url,
+            params={
+                "action": "query",
+                "titles": "File:" + filename,
+                "prop": "imageinfo",
+                "iiprop": "url",
+                "format": "json",
+            },
+            headers={"User-Agent": "FandomWikiMirror/1.0 (image-proxy)"},
+            timeout=10,
+        )
+        pages = r.json().get("query", {}).get("pages", {})
+        url = None
+        for page in pages.values():
+            if "imageinfo" in page:
+                url = page["imageinfo"][0]["url"]
+                break
+        if not url:
+            return "Image not found", 404
+        img_r = http_requests.get(url, timeout=30)
+        img_r.raise_for_status()
+        os.makedirs(os.path.dirname(local_path), exist_ok=True)
+        with open(local_path, "wb") as f:
+            f.write(img_r.content)
+        return send_file(local_path)
+    except Exception:
+        return "Image fetch failed", 502
 
 
 if __name__ == "__main__":

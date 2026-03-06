@@ -99,6 +99,35 @@ class TestServer:
         r = requests.get(f"{live_server}/wiki/This_Page_Does_Not_Exist_12345")
         assert r.status_code == 404
 
+    def test_image_proxy_nonexistent_returns_404(self, live_server: str) -> None:
+        r = requests.get(
+            f"{live_server}/image-proxy/{WIKI}/Totally_Fake_Image_12345.png"
+        )
+        assert r.status_code == 404
+
+    def test_image_proxy_fetches_real_image(
+        self, live_server: str, scraped_wiki: tuple[Path, str]
+    ) -> None:
+        """Proxy should resolve a real wiki image via the API and return it."""
+        import re
+        import sqlite3
+
+        _, db_path = scraped_wiki
+        conn = sqlite3.connect(db_path)
+        row = conn.execute("SELECT html FROM pages LIMIT 1").fetchone()
+        conn.close()
+        if not row:
+            pytest.skip("No pages in DB")
+        m = re.search(r'data-image-key="([^"]+)"', row[0])
+        if not m:
+            m = re.search(r'data-image-name="([^"]+)"', row[0])
+        if not m:
+            pytest.skip("No image references in first page")
+        image_name = m.group(1)
+        r = requests.get(f"{live_server}/image-proxy/{WIKI}/{image_name}")
+        assert r.status_code == 200
+        assert len(r.content) > 0
+
 
 class TestNonexistentWiki:
     def test_scrape_exits_with_error(self, tmp_path: Path) -> None:
