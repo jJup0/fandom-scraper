@@ -697,3 +697,175 @@ class TestMainIntegration:
 
         assert not os.path.exists(db_path)
         assert not os.path.exists(tmp_path / "static" / "fakewiki")
+
+    @patch("scrape.verify_wiki_exists", return_value=True)
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_images_downloaded_per_page_not_batched(
+        self, mock_get: MagicMock, mock_verify: MagicMock, tmp_path: Path
+    ) -> None:
+        """Images for page 1 are downloaded before page 2 is even parsed (#6)."""
+        db_path = str(tmp_path / "test.db")
+        img_dir = tmp_path / "static" / "mywiki" / "images"
+        img_dir.mkdir(parents=True)
+
+        theme_resp = MagicMock(text=":root{}")
+        allpages_resp = _mock_resp(
+            {
+                "query": {
+                    "pages": {
+                        "1": {
+                            "pageid": 1,
+                            "title": "A",
+                            "touched": "2024-01-01T00:00:00Z",
+                        },
+                        "2": {
+                            "pageid": 2,
+                            "title": "B",
+                            "touched": "2024-01-01T00:00:00Z",
+                        },
+                    }
+                }
+            }
+        )
+        parse_a = _mock_resp(
+            {
+                "parse": {
+                    "text": {"*": '<img src="https://x.com/a.png">'},
+                    "categories": [],
+                    "images": ["a.png"],
+                }
+            }
+        )
+        imageinfo_a = _mock_resp(
+            {
+                "query": {
+                    "pages": {
+                        "1": {
+                            "title": "File:a.png",
+                            "imageinfo": [{"url": "https://x.com/a.png"}],
+                        }
+                    }
+                }
+            }
+        )
+        img_a = MagicMock()
+        img_a.iter_content = MagicMock(return_value=[b"A"])
+
+        call_order: list[str] = []
+        parse_b = _mock_resp(
+            {
+                "parse": {
+                    "text": {"*": "<p>no images</p>"},
+                    "categories": [],
+                    "images": [],
+                }
+            }
+        )
+
+        responses = [theme_resp, allpages_resp, parse_a, imageinfo_a, img_a, parse_b]
+        original_side_effect = list(responses)
+
+        def tracking_get(*args: Any, **kwargs: Any) -> Any:
+            resp = original_side_effect.pop(0)
+            params = kwargs.get("params", {})
+            if params.get("action") == "parse":
+                call_order.append(f"parse:{params.get('page')}")
+            elif params.get("prop") == "imageinfo":
+                call_order.append("imageinfo")
+            elif kwargs.get("stream"):
+                call_order.append("download")
+            return resp
+
+        mock_get.side_effect = tracking_get
+
+        orig_dirname = os.path.dirname
+        fake_dirname = lambda p: (
+            str(tmp_path) if p == scrape.__file__ else orig_dirname(p)
+        )
+
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+
+        # Image for page A resolved+downloaded before page B is parsed
+        assert call_order.index("imageinfo") < call_order.index("parse:B")
+
+    @patch("scrape.verify_wiki_exists", return_value=True)
+    @patch.object(scrape, "RATE_LIMIT", 0)
+    @patch.object(scrape.SESSION, "get")
+    def test_html_rewritten_immediately_per_page(
+        self, mock_get: MagicMock, mock_verify: MagicMock, tmp_path: Path
+    ) -> None:
+        """HTML in DB should have local image paths right after page is scraped (#4)."""
+        db_path = str(tmp_path / "test.db")
+        img_dir = tmp_path / "static" / "mywiki" / "images"
+        img_dir.mkdir(parents=True)
+
+        theme_resp = MagicMock(text=":root{}")
+        allpages_resp = _mock_resp(
+            {
+                "query": {
+                    "pages": {
+                        "1": {
+                            "pageid": 1,
+                            "title": "Img Page",
+                            "touched": "2024-01-01T00:00:00Z",
+                        },
+                    }
+                }
+            }
+        )
+        parse_resp = _mock_resp(
+            {
+                "parse": {
+                    "text": {
+                        "*": '<img src="https://static.wikia.nocookie.net/mywiki/pic.png">'
+                    },
+                    "categories": [],
+                    "images": ["pic.png"],
+                }
+            }
+        )
+        imageinfo_resp = _mock_resp(
+            {
+                "query": {
+                    "pages": {
+                        "1": {
+                            "title": "File:pic.png",
+                            "imageinfo": [
+                                {
+                                    "url": "https://static.wikia.nocookie.net/mywiki/pic.png"
+                                }
+                            ],
+                        }
+                    }
+                }
+            }
+        )
+        img_resp = MagicMock()
+        img_resp.iter_content = MagicMock(return_value=[b"IMG"])
+
+        mock_get.side_effect = [
+            theme_resp,
+            allpages_resp,
+            parse_resp,
+            imageinfo_resp,
+            img_resp,
+        ]
+
+        orig_dirname = os.path.dirname
+        fake_dirname = lambda p: (
+            str(tmp_path) if p == scrape.__file__ else orig_dirname(p)
+        )
+
+        with patch("scrape.os.path.dirname", side_effect=fake_dirname):
+            with patch("sys.argv", ["scrape.py", "mywiki", "--db", db_path]):
+                scrape.main()
+
+        conn = sqlite3.connect(db_path)
+        html = conn.execute("SELECT html FROM pages WHERE pageid=1").fetchone()[0]
+        conn.close()
+        # HTML should have local path, not remote URL
+        assert "/static/mywiki/images/pic.png" in html
+        assert "static.wikia.nocookie.net" not in html
