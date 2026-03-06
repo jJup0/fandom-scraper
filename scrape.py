@@ -11,6 +11,7 @@ import re
 import sqlite3
 import sys
 import time
+import urllib.parse
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 
@@ -344,6 +345,47 @@ def main() -> None:
             log.info("committed %d pages", i + 1)
 
     conn.commit()
+
+    # Catch up: download missing images for already-stored pages
+    all_image_filenames: set[str] = set()
+    for row in c.execute("SELECT html FROM pages"):
+        for m in re.findall(r'data-image-key="([^"]+)"', row[0]):
+            all_image_filenames.add(urllib.parse.unquote(m))
+
+    local_files = set(os.listdir(img_dir))
+    needed = [
+        f
+        for f in all_image_filenames
+        if f.replace("/", "_").replace("\\", "_").replace(" ", "_") not in local_files
+    ]
+
+    if needed:
+        log.info(
+            "Downloading %d missing images (%d already local)...",
+            len(needed),
+            len(all_image_filenames) - len(needed),
+        )
+        image_urls = get_image_urls(needed)
+        image_map_catchup: dict[str, str] = {}
+        for fname, url in image_urls.items():
+            try:
+                local = download_image(url, fname)
+                image_map_catchup[url] = local
+            except Exception as e:
+                log.warning("FAILED %s: %s", fname, e)
+
+        # Rewrite HTML in stored pages to use local images
+        if image_map_catchup:
+            log.info("Rewriting image URLs in stored pages...")
+            for row in c.execute("SELECT pageid, html FROM pages").fetchall():
+                new_html = rewrite_html(row[1], image_map_catchup)
+                if new_html != row[1]:
+                    c.execute(
+                        "UPDATE pages SET html=?, plaintext=? WHERE pageid=?",
+                        (new_html, strip_text(new_html), row[0]),
+                    )
+            conn.commit()
+
     conn.close()
     log.info("Done!")
 
