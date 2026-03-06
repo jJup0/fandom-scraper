@@ -93,38 +93,108 @@ def index() -> str:
     )
 
 
+def _remote_search(q: str, wiki: str, limit: int = 20) -> list[dict[str, str]]:
+    """Search Fandom's MediaWiki API for pages matching q (#9)."""
+    try:
+        r = http_requests.get(
+            f"https://{wiki}.fandom.com/api.php",
+            params={
+                "action": "opensearch",
+                "search": q,
+                "limit": str(limit),
+                "format": "json",
+            },
+            headers={"User-Agent": "FandomWikiMirror/1.0 (search-proxy)"},
+            timeout=5,
+        )
+        data = r.json()
+        if len(data) >= 2:
+            return [{"title": t, "snip": "(from Fandom)"} for t in data[1]]
+    except Exception as e:
+        log.debug("remote-search failed: %s", e)
+    return []
+
+
 @app.route("/api/search")
 def api_search() -> Response:
     db = get_db()
     q = request.args.get("q", "").strip()
     if not q:
         return jsonify([])
-    rows = _search(db, q, limit=20)
-    return jsonify([{"title": r["title"], "snip": r["snip"]} for r in rows])
+    local = _search(db, q, limit=20)
+    results = [{"title": r["title"], "snip": r["snip"]} for r in local]
+    # Merge remote results while scraping (#9)
+    if scraping_in_progress:
+        wiki_slug: str = app.config.get("WIKI_SLUG", "")  # type: ignore[assignment]
+        local_titles = {r["title"] for r in results}
+        remote = _remote_search(q, wiki_slug)
+        # Title matches from remote go first
+        ql = q.lower()
+        remote_new = [r for r in remote if r["title"] not in local_titles]
+        remote_title = [r for r in remote_new if ql in r["title"].lower()]
+        remote_other = [r for r in remote_new if ql not in r["title"].lower()]
+        results = remote_title + results + remote_other
+    return jsonify(results)
 
 
 @app.route("/wiki/<path:title>")
 def page(title: str) -> str | tuple[str, int] | Response:
     db = get_db()
-    row = db.execute(
-        "SELECT * FROM pages WHERE title = ?", (title.replace("_", " "),)
-    ).fetchone()
+    normalized = title.replace("_", " ")
+    row = db.execute("SELECT * FROM pages WHERE title = ?", (normalized,)).fetchone()
+    wiki_slug: str = app.config.get("WIKI_SLUG", "")  # type: ignore[assignment]
+    # On-demand fetch if page not in DB (#8)
     if not row:
-        return "Page not found", 404
+        log.info("page-proxy: fetching '%s' on demand", normalized)
+        try:
+            api_url = f"https://{wiki_slug}.fandom.com/api.php"
+            r = http_requests.get(
+                api_url,
+                params={
+                    "action": "parse",
+                    "page": normalized,
+                    "prop": "text|categories|images",
+                    "disableeditsection": "true",
+                    "format": "json",
+                },
+                headers={"User-Agent": "FandomWikiMirror/1.0 (page-proxy)"},
+                timeout=15,
+            )
+            data = r.json()
+            if "error" not in data:
+                from scrape import rewrite_html, strip_text
+
+                parsed = data["parse"]
+                html = rewrite_html(parsed["text"]["*"], {})
+                categories = [c["*"] for c in parsed.get("categories", [])]
+                row = {
+                    "title": parsed["title"],
+                    "html": html,
+                    "categories": json.dumps(categories),
+                }
+        except Exception as e:
+            log.debug("page-proxy: failed '%s': %s", normalized, e)
+    if not row:
+        fandom_url = f"https://{wiki_slug}.fandom.com/wiki/{title}"
+        return (
+            f'<p>Page not found. <a href="{fandom_url}">View on Fandom</a></p>',
+            404,
+        )
     # Follow MediaWiki redirects
     if '<div class="redirectMsg">' in row["html"]:
         m = re.search(r'href="/wiki/([^"]+)"', row["html"])
         if m:
             return redirect("/wiki/" + m.group(1))
-    categories: list[str] = json.loads(row["categories"])
+    categories_list: list[str] = json.loads(row["categories"])
     has_full_css: bool = app.config.get("HAS_FULL_CSS", True)  # type: ignore[assignment]
-    wiki_slug: str = app.config.get("WIKI_SLUG", "")  # type: ignore[assignment]
+    fandom_url = f"https://{wiki_slug}.fandom.com/wiki/{title}"
     return render_template(
         "page.html",
         page=row,
-        categories=categories,
+        categories=categories_list,
         has_full_css=has_full_css,
         wiki_slug=wiki_slug,
+        fandom_url=fandom_url,
     )
 
 

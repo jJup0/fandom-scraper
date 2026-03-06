@@ -46,10 +46,14 @@
     /* Gallery fallback */
     .wikia-gallery { display: flex; flex-wrap: wrap; gap: 8px; list-style: none; padding: 0; }
     .wikia-gallery .thumb { max-width: 185px; }
+    /* Collapsible fallback */
+    .mw-collapsible.mw-collapsed > *:not(span:first-child):not(.mw-collapsible-toggle) { display: none; }
+    .mw-collapsible.mw-collapsed > span:first-child { display: inline; }
   </style>
 </head>
 <body class="skin-fandomdesktop theme-fandomdesktop-light" data-theme="light">
   <a class="back" href="/">← Back to index</a>
+  {% if fandom_url %}<a class="fandom-link" href="{{ fandom_url }}" style="float:right;font-size:13px;color:var(--theme-link-color,#2a73b5)">View on Fandom ↗</a>{% endif %}
   {% if not has_full_css %}<div style="background:#fff3cd;color:#856404;padding:8px 12px;border-radius:4px;margin-bottom:12px;font-size:13px">⚠️ Using fallback CSS. For best styling, see <a href="https://github.com" style="color:#856404;text-decoration:underline">README</a> for browser CSS extraction.</div>{% endif %}
   <div class="page-wrapper">
   <h1>{{ page.title }}</h1>
@@ -61,6 +65,37 @@
   <div class="wiki-content">{{ page.html | safe }}</div>
   </div>
   <script>document.addEventListener('keydown',e=>{if(e.ctrlKey&&e.shiftKey&&e.key==='F'){e.preventDefault();window.location.href='/';}});
+  // Tabs: wds-tabber (#7)
+  document.querySelectorAll('.wds-tabber').forEach(tabber=>{
+    const tabs=tabber.querySelectorAll('.wds-tabs__tab');
+    const contents=tabber.querySelectorAll(':scope > .wds-tab__content');
+    tabs.forEach((tab,i)=>{
+      tab.addEventListener('click',e=>{
+        e.preventDefault();
+        tabs.forEach(t=>t.classList.remove('wds-is-current'));
+        contents.forEach(c=>c.classList.remove('wds-is-current'));
+        tab.classList.add('wds-is-current');
+        if(contents[i]) contents[i].classList.add('wds-is-current');
+      });
+    });
+  });
+  // Collapsibles: mw-collapsible
+  document.querySelectorAll('.mw-collapsible').forEach(el=>{
+    const toggle=document.createElement('span');
+    toggle.textContent=el.classList.contains('mw-collapsed')?'[Expand]':'[Collapse]';
+    toggle.style.cssText='cursor:pointer;color:var(--theme-link-color,#2a73b5);font-size:13px;margin-left:8px;';
+    toggle.addEventListener('click',()=>{
+      el.classList.toggle('mw-collapsed');
+      toggle.textContent=el.classList.contains('mw-collapsed')?'[Expand]':'[Collapse]';
+    });
+    el.prepend(toggle);
+  });
+  // Handle anchor hash for tabs on page load
+  if(location.hash){
+    const hash=decodeURIComponent(location.hash.slice(1));
+    const tab=document.querySelector('.wds-tabs__tab[data-hash="'+CSS.escape(hash)+'"]');
+    if(tab) tab.click();
+  }
   // Fallback: if local image missing, try proxy to fetch from remote (#5)
   document.querySelectorAll('.wiki-content img').forEach(img=>{
     img.classList.remove('lazyload');
