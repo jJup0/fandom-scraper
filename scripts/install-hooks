@@ -5,9 +5,10 @@
 cat > .git/hooks/pre-commit << 'EOF'
 #!/bin/sh
 set -e
-autoflake --remove-all-unused-imports --check --quiet .
-isort --check-only --quiet .
-black --check --quiet .
+autoflake --remove-all-unused-imports --in-place .
+isort .
+black .
+git add -u
 EOF
 chmod +x .git/hooks/pre-commit
 

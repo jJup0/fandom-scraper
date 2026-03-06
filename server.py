@@ -181,7 +181,9 @@ if __name__ == "__main__":
     p.add_argument("--no-scrape", action="store_true", help="Skip scraping, just serve")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
-    p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    p.add_argument(
+        "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
+    )
     args = p.parse_args()
 
     logging.basicConfig(
