@@ -7,3 +7,4 @@ __pycache__/
 .tox/
 .pytest_cache/
 temp/
+test-artifacts/

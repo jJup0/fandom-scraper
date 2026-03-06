@@ -40,16 +40,47 @@ def server_url() -> Generator[str, None, None]:
     proc.wait(timeout=5)
 
 
+ARTIFACTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "test-artifacts")
+
+
 @pytest.fixture
-def page(server_url: str) -> Generator[tuple[Page, str], None, None]:
-    """Fresh browser page per test — no state leakage."""
+def page(
+    request: pytest.FixtureRequest, server_url: str
+) -> Generator[tuple[Page, str], None, None]:
+    """Fresh browser page per test with video recording."""
     from playwright.sync_api import sync_playwright
 
+    os.makedirs(ARTIFACTS_DIR, exist_ok=True)
     with sync_playwright() as p:
         browser: Browser = p.chromium.launch(headless=True)
-        pg = browser.new_page()
+        ctx = browser.new_context(
+            record_video_dir=ARTIFACTS_DIR,
+            record_video_size={"width": 1280, "height": 720},
+        )
+        pg = ctx.new_page()
         yield pg, server_url
+        # Screenshot on failure
+        if request.node.rep_call.failed:
+            name = request.node.name
+            pg.screenshot(path=os.path.join(ARTIFACTS_DIR, f"{name}.png"))
+        ctx.close()
+        # Rename video to test name
+        if pg.video:
+            video_path = pg.video.path()
+            if os.path.exists(video_path):
+                dest = os.path.join(ARTIFACTS_DIR, f"{request.node.name}.webm")
+                os.replace(video_path, dest)
         browser.close()
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Generator:  # type: ignore[type-arg]
+    """Attach test outcome to the request node so the fixture can check it."""
+    import pluggy
+
+    outcome: pluggy.Result = yield  # type: ignore[assignment]
+    rep = outcome.get_result()
+    setattr(item, f"rep_{rep.when}", rep)
 
 
 def test_index_loads(page: tuple[Page, str]) -> None:
@@ -62,9 +93,16 @@ def test_index_loads(page: tuple[Page, str]) -> None:
 def test_search_works(page: tuple[Page, str]) -> None:
     pg, url = page
     pg.goto(url)
-    pg.fill("input[name='q']", "puzzle")
-    pg.press("input[name='q']", "Enter")
-    expect(pg.locator("body")).to_contain_text("puzzle")
+    initial_count = pg.locator("#results li").count()
+    assert initial_count > 1, "should have multiple pages listed initially"
+    # Type to trigger JS live search (input event, not form submit)
+    pg.locator("input[name='q']").press_sequentially("chapter", delay=50)
+    # Wait for JS search to replace results — the count text only appears after fetch
+    pg.locator(".count").wait_for(timeout=5000)
+    # Wait for the result list to actually shrink
+    expect(pg.locator("#results li")).not_to_have_count(initial_count, timeout=3000)
+    assert pg.locator("#results li").count() < initial_count, "search should filter results"
+    assert pg.locator(".snip").count() > 0, "search results should have text snippets"
 
 
 def test_wiki_page_loads(page: tuple[Page, str]) -> None:
