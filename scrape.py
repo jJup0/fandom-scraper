@@ -365,14 +365,17 @@ def main() -> None:
             len(needed),
             len(all_image_filenames) - len(needed),
         )
-        image_urls = get_image_urls(needed)
         image_map_catchup: dict[str, str] = {}
-        for fname, url in image_urls.items():
-            try:
-                local = download_image(url, fname)
-                image_map_catchup[url] = local
-            except Exception as e:
-                log.warning("FAILED %s: %s", fname, e)
+        for i in range(0, len(needed), 50):
+            batch = needed[i : i + 50]
+            batch_urls = get_image_urls(batch)
+            for fname, url in batch_urls.items():
+                try:
+                    local = download_image(url, fname)
+                    image_map_catchup[url] = local
+                except Exception as e:
+                    log.warning("FAILED %s: %s", fname, e)
+            log.info("  %d/%d images done", min(i + 50, len(needed)), len(needed))
 
         # Rewrite HTML in stored pages to use local images
         if image_map_catchup:
