@@ -25,6 +25,7 @@ from flask import (
     send_file,
 )
 
+log = logging.getLogger("server")
 app: Flask = Flask(__name__)
 _db_path: str | None = None
 _wiki_name: str | None = None
@@ -158,32 +159,36 @@ def image_proxy(wiki: str, filename: str) -> Response | tuple[str, int]:
                 url = page["imageinfo"][0]["url"]
                 break
         if not url:
+            log.debug("image-proxy: not found on remote: %s", filename)
             return "Image not found", 404
+        log.debug("image-proxy: fetching %s from %s", filename, url)
         img_r = http_requests.get(url, timeout=30)
         img_r.raise_for_status()
         os.makedirs(os.path.dirname(local_path), exist_ok=True)
         with open(local_path, "wb") as f:
             f.write(img_r.content)
+        log.debug("image-proxy: cached %s", safe_name)
         return send_file(local_path)
-    except Exception:
+    except Exception as e:
+        log.debug("image-proxy: failed %s: %s", filename, e)
         return "Image fetch failed", 502
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        format="%(asctime)s [%(name)s] %(message)s",
-        datefmt="%H:%M:%S",
-        level=logging.INFO,
-    )
-    log = logging.getLogger("server")
-
     p = argparse.ArgumentParser()
     p.add_argument("wiki", help="Wiki name (e.g. spiritfarer)")
     p.add_argument("--db", default=None, help="Database path (default: <wiki>.db)")
     p.add_argument("--no-scrape", action="store_true", help="Skip scraping, just serve")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
+    p.add_argument("--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"])
     args = p.parse_args()
+
+    logging.basicConfig(
+        format="%(asctime)s [%(name)s] %(message)s",
+        datefmt="%H:%M:%S",
+        level=getattr(logging, args.log_level),
+    )
 
     _db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
 
