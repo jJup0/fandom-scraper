@@ -164,11 +164,18 @@ def get_image_urls(filenames: list[str]) -> dict[str, str]:
     return urls
 
 
+_static_dir: str | None = None
+
+
+def _require_static_dir() -> str:
+    return _static_dir or os.path.join(os.path.dirname(__file__), "static")
+
+
 def download_image(url: str, filename: str) -> str:
     """Download image to static/images/, return local relative path."""
     safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
     local_path = os.path.join(
-        os.path.dirname(__file__), "static", _require_wiki_name(), "images", safe_name
+        _require_static_dir(), _require_wiki_name(), "images", safe_name
     )
     if os.path.exists(local_path):
         return safe_name
@@ -240,9 +247,16 @@ def main() -> None:
         "wiki", help="Wiki subdomain (e.g. spiritfarer, hollowknight, stardewvalley)"
     )
     parser.add_argument("--db", default=None, help="Database path (default: <wiki>.db)")
+    parser.add_argument(
+        "--static-dir",
+        default=None,
+        help="Static files directory (default: static/ next to script)",
+    )
     args = parser.parse_args()
 
     init_wiki(args.wiki)
+    global _static_dir
+    _static_dir = args.static_dir
 
     log.info("Verifying wiki '%s' exists...", args.wiki)
     if not verify_wiki_exists():
@@ -250,16 +264,14 @@ def main() -> None:
         sys.exit(1)
 
     db_path: str = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
-    img_dir = os.path.join(os.path.dirname(__file__), "static", args.wiki, "images")
+    img_dir = os.path.join(_require_static_dir(), args.wiki, "images")
     os.makedirs(img_dir, exist_ok=True)
 
     # Download theme variables (not behind Cloudflare)
     theme_url = f"https://{args.wiki}.fandom.com/wikia.php?controller=ThemeApi&method=themeVariables"
     log.info("Downloading theme variables from %s...", theme_url)
     theme_css = SESSION.get(theme_url).text
-    theme_path = os.path.join(
-        os.path.dirname(__file__), "static", args.wiki, "theme.css"
-    )
+    theme_path = os.path.join(_require_static_dir(), args.wiki, "theme.css")
     os.makedirs(os.path.dirname(theme_path), exist_ok=True)
     with open(theme_path, "w") as f:
         f.write(theme_css)

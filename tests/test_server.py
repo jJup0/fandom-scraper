@@ -228,11 +228,11 @@ class TestImageProxy:
     ) -> None:
         import server
 
-        img_dir = tmp_path / "static" / "testwiki" / "images"
+        img_dir = tmp_path / "testwiki" / "images"
         img_dir.mkdir(parents=True)
         (img_dir / "local.png").write_bytes(b"PNG_DATA")
-        with patch("server.os.path.dirname", return_value=str(tmp_path)):
-            resp = client.get("/image-proxy/testwiki/local.png")
+        server.app.static_folder = str(tmp_path)
+        resp = client.get("/image-proxy/testwiki/local.png")
         assert resp.status_code == 200
         assert resp.data == b"PNG_DATA"
 
@@ -240,8 +240,11 @@ class TestImageProxy:
     def test_fetches_remote_and_caches(
         self, mock_get: MagicMock, client: FlaskClient, tmp_path: Path
     ) -> None:
-        img_dir = tmp_path / "static" / "testwiki" / "images"
+        import server
+
+        img_dir = tmp_path / "testwiki" / "images"
         img_dir.mkdir(parents=True)
+        server.app.static_folder = str(tmp_path)
 
         api_resp = MagicMock()
         api_resp.json.return_value = {
@@ -259,8 +262,7 @@ class TestImageProxy:
         img_resp.raise_for_status = MagicMock()
         mock_get.side_effect = [api_resp, img_resp]
 
-        with patch("server.os.path.dirname", return_value=str(tmp_path)):
-            resp = client.get("/image-proxy/testwiki/remote.png")
+        resp = client.get("/image-proxy/testwiki/remote.png")
         assert resp.status_code == 200
         assert (img_dir / "remote.png").read_bytes() == b"REMOTE_IMG"
 
@@ -268,34 +270,40 @@ class TestImageProxy:
     def test_returns_404_when_image_not_found(
         self, mock_get: MagicMock, client: FlaskClient, tmp_path: Path
     ) -> None:
-        (tmp_path / "static" / "testwiki" / "images").mkdir(parents=True)
+        import server
+
+        (tmp_path / "testwiki" / "images").mkdir(parents=True)
+        server.app.static_folder = str(tmp_path)
         api_resp = MagicMock()
         api_resp.json.return_value = {
             "query": {"pages": {"-1": {"title": "File:nope.png", "missing": ""}}}
         }
         mock_get.return_value = api_resp
 
-        with patch("server.os.path.dirname", return_value=str(tmp_path)):
-            resp = client.get("/image-proxy/testwiki/nope.png")
+        resp = client.get("/image-proxy/testwiki/nope.png")
         assert resp.status_code == 404
 
     @patch("server.http_requests.get")
     def test_returns_502_on_network_error(
         self, mock_get: MagicMock, client: FlaskClient, tmp_path: Path
     ) -> None:
-        (tmp_path / "static" / "testwiki" / "images").mkdir(parents=True)
+        import server
+
+        (tmp_path / "testwiki" / "images").mkdir(parents=True)
+        server.app.static_folder = str(tmp_path)
         mock_get.side_effect = Exception("connection refused")
 
-        with patch("server.os.path.dirname", return_value=str(tmp_path)):
-            resp = client.get("/image-proxy/testwiki/fail.png")
+        resp = client.get("/image-proxy/testwiki/fail.png")
         assert resp.status_code == 502
 
     def test_sanitizes_filename(self, client: FlaskClient, tmp_path: Path) -> None:
-        img_dir = tmp_path / "static" / "testwiki" / "images"
+        import server
+
+        img_dir = tmp_path / "testwiki" / "images"
         img_dir.mkdir(parents=True)
         (img_dir / "a_b.png").write_bytes(b"IMG")
-        with patch("server.os.path.dirname", return_value=str(tmp_path)):
-            resp = client.get("/image-proxy/testwiki/a/b.png")
+        server.app.static_folder = str(tmp_path)
+        resp = client.get("/image-proxy/testwiki/a/b.png")
         assert resp.status_code == 200
 
 

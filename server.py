@@ -210,9 +210,7 @@ def page(title: str) -> str | tuple[str, int] | Response:
 def image_proxy(wiki: str, filename: str) -> Response | tuple[str, int]:
     """Fetch missing image from remote, cache locally, and serve it (#5)."""
     safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
-    local_path = os.path.join(
-        os.path.dirname(__file__), "static", wiki, "images", safe_name
-    )
+    local_path = os.path.join(app.static_folder or "", wiki, "images", safe_name)
     if os.path.exists(local_path):
         return send_file(local_path)
     # Resolve URL via MediaWiki API
@@ -260,6 +258,11 @@ if __name__ == "__main__":
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=5000)
     p.add_argument(
+        "--static-dir",
+        default=None,
+        help="Static files directory (default: static/ next to script)",
+    )
+    p.add_argument(
         "--log-level", default="INFO", choices=["DEBUG", "INFO", "WARNING", "ERROR"]
     )
     args = p.parse_args()
@@ -272,6 +275,9 @@ if __name__ == "__main__":
 
     _db_path = args.db or os.path.join(os.path.dirname(__file__), f"{args.wiki}.db")
     _status_path = os.path.join(os.path.dirname(_db_path), f".{args.wiki}.status")
+
+    if args.static_dir:
+        app.static_folder = os.path.abspath(args.static_dir)
 
     if not args.no_scrape:
         from scrape import init_wiki, verify_wiki_exists
@@ -289,13 +295,15 @@ if __name__ == "__main__":
             ]
             if args.db:
                 cmd += ["--db", args.db]
+            if args.static_dir:
+                cmd += ["--static-dir", args.static_dir]
             subprocess.run(cmd)
 
         log.info("Scraping %s in background...", args.wiki)
         threading.Thread(target=_scrape, daemon=True).start()
 
     _wiki_name = args.wiki.replace("-", " ").title()
-    css_path = os.path.join(os.path.dirname(__file__), "static", "fandom-all.css")
+    css_path = os.path.join(app.static_folder or "", "fandom-all.css")
     has_full_css = os.path.exists(css_path) and os.path.getsize(css_path) > 5000
     if not has_full_css:
         log.warning("Full Fandom CSS not found — using fallback styles.")
